@@ -1,5 +1,6 @@
 import json
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -42,7 +43,7 @@ def test_stop_al_lado_equivocado_y_nivel_lejano():
     assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan="**Entry Price**: 100\n**Stop Loss**: 105"))
     assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan="**Entry Price**: 500"))
     assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan="**Stop Loss**: 110"), rating="Buy")
-    assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan="**Entry Price**: 100\n**Stop Loss**: 95"), rating="Sell")
+    assert ("Niveles", ar.RESERVAS) in _controles(_estado(trader_investment_plan="**Entry Price**: 100\n**Stop Loss**: 95"), rating="Sell")
 
 
 def test_incoherencia_e_informes():
@@ -675,3 +676,62 @@ def test_r2_c10_terminado_no_pasa_a_fallido(motor, monkeypatch):
     monkeypatch.setattr(motor, "escribir", falla)
     run._atender(motor, t, None, False)
     assert al.trabajo(motor, t["id"])["estado"] == "terminado"
+
+
+# --- regresiones de la ronda 3 del arbitro ---
+
+def test_r3_d2_stop_al_reducir_no_bloquea():
+    c = _controles(_estado(trader_investment_plan=_real(92.0)), rating="Underweight")
+    assert ("Niveles", ar.RESERVAS) in c and ("Niveles", ar.NO_OPERAR) not in c
+
+
+def test_r3_d3_fuentes_de_sentimiento_caidas_cuentan(motor, monkeypatch):
+    from motor import simulado
+    from tradingagents.agents.analysts import sentiment_analyst as sa
+    simulado.instalar()
+    vistos = {}
+    monkeypatch.setattr(ar, "precio_referencia", lambda *a: {"cierre": 100.0, "fecha": al.hoy(), "rango_medio": 2.0})
+    monkeypatch.setattr(ar, "proximos_resultados", lambda *a: None)
+    original = ar.arbitrar
+
+    def espia(*a, **k):
+        vistos["fallos"] = a[8]
+        return original(*a, **k)
+    monkeypatch.setattr(ar, "arbitrar", espia)
+    monkeypatch.setattr(sa, "fetch_stocktwits_messages", lambda *a, **k: "<StockTwits data unavailable: 503>")   # asi falla el real
+    t = _trabajo(motor, analistas=["social"])
+    run._una_vuelta(motor, "yo", True)
+    assert al.trabajo(motor, t["id"])["estado"] == "terminado"
+    assert vistos["fallos"] >= 1
+
+
+def test_r3_d4_hold_con_planes_ilegibles_no_aprueba():
+    assert ("Coherencia", ar.RESERVAS) in _controles(_estado(investment_plan="", trader_investment_plan="basura"), rating="Hold")
+
+
+def test_r3_f3_fallo_en_sigterm_igual_sale():
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    d = tempfile.mkdtemp()
+    guion = Path(d) / "g.py"
+    guion.write_text("""
+import os, signal, threading, time, motor.run as r
+from motor import almacen as al
+t = al.abrir()
+al.encolar(t, {"tipo": "analisis", "ticker": "A", "fecha": al.hoy(), "rondas": 1, "analistas": ["market"]})
+def rompe(*a): raise OSError("503")
+def largo(*a):
+    r._interrumpir = rompe
+    print("listo", flush=True); os.kill(os.getpid(), signal.SIGTERM); time.sleep(30); print("SIGUIO", flush=True)
+r._analizar = largo
+r.main()
+""")
+    p = subprocess.run([sys.executable, str(guion)], capture_output=True, text=True, timeout=25, env={**os.environ, "AGENTES_DATOS": d, "PYTHONPATH": os.getcwd()})
+    assert p.returncode == 143 and "SIGUIO" not in p.stdout
+
+
+def test_r3_web_login_permite_el_script_de_google():
+    from web import acceso
+    assert "https://apis.google.com" in acceso.CSP_LOGIN

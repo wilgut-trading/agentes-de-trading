@@ -184,13 +184,15 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
     if stop is not None and stop <= 0:
         _reservas(c, "Niveles", NO_OPERAR, f"El stop ({stop:,.2f}) no es un precio válido.")
     elif stop is not None and base is not None and sentido and (stop - base) * sentido >= 0:
-        _reservas(c, "Niveles", NO_OPERAR, f"El stop ({stop:,.2f}) está del lado equivocado de {base:,.2f}.")
+        # Vender puede ser reducir una posicion larga, cuyo stop de proteccion va por debajo.
+        _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El stop ({stop:,.2f}) está del lado equivocado de {base:,.2f}"
+                  + ("." if sentido > 0 else ": solo es válido si reduces una posición larga, no si abres un corto."))
     elif stop is None and sentido:
         _reservas(c, "Niveles", RESERVAS, "No se pudo leer un stop: define tú la salida antes de operar.")
 
     investigacion, trader = _rating_en(estado.get("investment_plan")), _accion(plan)
     for nombre, otro in (("gerente de investigación", investigacion), ("trader", trader)):
-        if otro is None and sentido:
+        if otro is None:
             _reservas(c, "Coherencia", RESERVAS, f"No se pudo leer qué recomendó el {nombre}.")
         elif otro and sentido and otro != sentido:
             _reservas(c, "Coherencia", RESERVAS, f"El {nombre} recomendó el sentido contrario.")

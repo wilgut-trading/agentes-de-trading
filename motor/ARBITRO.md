@@ -44,8 +44,8 @@ Controles deterministas (código, sin modelo):
 | Frescura | Sin precio, o último cierre demasiado viejo | No operar |
 | Informes | Falta un analista elegido | Reservas (2 o más: no operar) |
 | Datos | Una herramienta de datos falló durante el análisis | Reservas |
-| Niveles | Entrada o stop lejos del precio, o stop al lado equivocado | No operar |
-| Niveles | Sin stop legible, u objetivo al lado contrario | Reservas |
+| Niveles | Entrada o stop lejos del precio, o stop al lado equivocado en Buy u Overweight | No operar |
+| Niveles | Sin stop legible, u objetivo al lado contrario. En Underweight o Sell, stop por debajo del precio: vale si reduces una posición larga, no si abres un corto | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
 | Resultados | Hay presentación de resultados dentro de la ventana de 5 sesiones | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |

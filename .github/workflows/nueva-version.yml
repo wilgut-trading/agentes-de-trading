@@ -49,12 +49,18 @@ jobs:
           git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/TauricResearch/TradingAgents.git
           git fetch upstream "refs/tags/$NUEVA:refs/tags/$NUEVA"
-          git switch -C "$RAMA"
+          # Si la rama ya existe se continua sobre ella, sin forzar: puede tener tus ajustes.
+          if git fetch origin "$RAMA:refs/remotes/origin/$RAMA" 2>/dev/null; then git switch -C "$RAMA" "origin/$RAMA"; else git switch -C "$RAMA"; fi
           CONFLICTO=false
           git merge --no-edit "$NUEVA" || { CONFLICTO=true; git merge --abort; }
           echo "conflicto=$CONFLICTO" >> "$GITHUB_OUTPUT"
-          echo "$NUEVA" > VERSION_BASE.txt; git add VERSION_BASE.txt; git commit -m "Propone TradingAgents $NUEVA" || true
-          git push --force "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$RAMA"
+          if [ "$CONFLICTO" = true ]; then
+            # Sin subir de version: sin el codigo nuevo, anotarla falsearia lo instalado.
+            git commit --allow-empty -m "La fusion de TradingAgents $NUEVA tiene conflictos"
+          else
+            echo "$NUEVA" > VERSION_BASE.txt; git add VERSION_BASE.txt; git commit -m "Propone TradingAgents $NUEVA" || true
+          fi
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$RAMA"
   probar:
     needs: preparar
     if: needs.preparar.outputs.seguir == 'true' && needs.preparar.outputs.conflicto == 'false'

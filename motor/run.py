@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from motor import almacen as al
 
@@ -144,8 +145,10 @@ def _latido(tienda, dueno, carpeta, parar):
         try:
             if vueltas % 15 == 0 and not al.tomar_candado(tienda, dueno):
                 log.critical("Otro motor tomo el candado; salgo para no invalidar la sesion.")
-                carpeta.subir_sesion()
-                os._exit(3)
+                try:
+                    carpeta.subir_sesion()
+                finally:
+                    os._exit(3)
             carpeta.subir_sesion()
         except Exception:
             log.exception("Latido fallido; se reintenta")
@@ -162,6 +165,7 @@ def _analizar(tienda, t, carpeta, simulado):
     from datetime import date
 
     from motor import arbitro
+    from tradingagents.agents.analysts import sentiment_analyst as sentimiento
     from tradingagents.agents.rating import run_rating
     from tradingagents.dataflows.symbols import crypto_base, normalize_symbol
     from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -187,19 +191,28 @@ def _analizar(tienda, t, carpeta, simulado):
     grafo = TradingAgentsGraph(t["analistas"], config=config)
     inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
     final, fallos, vistos, hechas = {}, 0, set(), []
-    for mensajes, estado in grafo.stream_run(inicio, **grafo.propagator.get_graph_args()):
-        for m in mensajes:
-            clave = getattr(m, "id", None) or id(m)
-            if clave not in vistos:
-                vistos.add(clave)
-                if getattr(m, "type", "") == "tool" and any(f in str(m.content) for f in FALLO_DATOS):
-                    fallos += 1
-        final.update(estado or {})
-        ahora_hechas = [n for k, n in ETAPAS if final.get(k)]
-        if ahora_hechas != hechas:
-            hechas = ahora_hechas
-            total = len(ETAPAS) - (4 - len(t["analistas"]))
-            al.actualizar(tienda, id_, etapa=f"Terminó: {hechas[-1]}", avance=min(95, round(100 * len(hechas) / total)))
+    # El analista de sentimiento recibe sus fuentes dentro del prompt, no como herramientas.
+    construir = sentimiento._build_system_message
+    sin_fuentes = []
+
+    def vigilar(*a, **k):
+        sin_fuentes.extend(v for n, v in k.items() if n.endswith("_block") and any(f in str(v) for f in (*FALLO_DATOS, "unavailable")))
+        return construir(*a, **k)
+    with mock.patch.object(sentimiento, "_build_system_message", vigilar):
+        for mensajes, estado in grafo.stream_run(inicio, **grafo.propagator.get_graph_args()):
+            for m in mensajes:
+                clave = getattr(m, "id", None) or id(m)
+                if clave not in vistos:
+                    vistos.add(clave)
+                    if getattr(m, "type", "") == "tool" and any(f in str(m.content) for f in FALLO_DATOS):
+                        fallos += 1
+            final.update(estado or {})
+            ahora_hechas = [n for k, n in ETAPAS if final.get(k)]
+            if ahora_hechas != hechas:
+                hechas = ahora_hechas
+                total = len(ETAPAS) - (4 - len(t["analistas"]))
+                al.actualizar(tienda, id_, etapa=f"Terminó: {hechas[-1]}", avance=min(95, round(100 * len(hechas) / total)))
+    fallos += len(sin_fuentes)
     if not final.get("final_trade_decision"):
         raise RuntimeError("TradingAgents terminó sin decisión final.")
     grafo.record_decision(ticker, fecha, final)
@@ -314,10 +327,12 @@ def _una_vuelta(tienda, dueno, simulado):
     def al_recibir_sigterm():
         """El hilo principal puede estar esperando a un agente durante minutos, y el aviso de
         Cloud Run da poco margen: se guarda todo aqui y se sale sin esperarlo."""
-        carpeta.devolver()
-        _interrumpir(tienda)
-        al.soltar_candado(tienda, dueno)
-        os._exit(143)
+        try:
+            carpeta.devolver()
+            _interrumpir(tienda)
+            al.soltar_candado(tienda, dueno)
+        finally:
+            os._exit(143)
     global _al_recibir_sigterm
     _al_recibir_sigterm = al_recibir_sigterm
     try:
@@ -336,6 +351,7 @@ def _una_vuelta(tienda, dueno, simulado):
             parar.set()
             latido.join(timeout=60)   # un latido tardio no debe recrear el candado ya soltado
             carpeta.subir_sesion()
+            _al_recibir_sigterm = None   # el candado ya no es nuestro: un aviso tardio no debe tocar nada
             al.soltar_candado(tienda, dueno)
     return resultado
 

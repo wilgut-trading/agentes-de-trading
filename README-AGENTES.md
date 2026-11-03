@@ -20,3 +20,12 @@ defectos, no que vaya a ganar.
 - **Renovar la sesión de ChatGPT:** cuando Ajustes diga "Caducada", pide a Claude Code los pasos de
   inicio de sesión de este proyecto. Tus credenciales las escribes tú.
 - **Actualizar TradingAgents:** mira [ACTUALIZAR.md](ACTUALIZAR.md).
+
+## Configuración de seguridad (se comprueba al desplegar)
+
+- **Ambiente `vista-previa` en GitHub:** con revisor obligatorio. Compruébalo con
+  `gh api repos/wilgut-trading/agentes-de-trading/environments/vista-previa`: debe mostrar `required_reviewers`.
+- **Ambiente `produccion`:** solo para la rama `main`. Aquí, y no en el repositorio, van los secretos.
+- **Google Cloud:** el acceso sin claves desde GitHub se limita a este repositorio y a esos dos ambientes.
+- **`TOKEN_ACTUALIZACION`:** solo hace falta si una versión nueva cambia `.github/workflows`. Si lo creas,
+  ponle caducidad y permiso solo sobre este repositorio.

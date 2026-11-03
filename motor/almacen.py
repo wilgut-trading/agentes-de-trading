@@ -4,6 +4,7 @@ Toda escritura admite una condicion (`si_version`), y de eso dependen la cola y 
 candado: dos procesos que compiten solo pueden ganar uno. `si_version=0` significa
 "solo si no existe".
 """
+import contextlib
 import json
 import os
 import random
@@ -279,10 +280,8 @@ def tomar_candado(almacen, dueno: str) -> bool:
 def soltar_candado(almacen, dueno: str):
     hallado = almacen.leer(CANDADO)
     if hallado and json.loads(hallado[0])["dueno"] == dueno:
-        try:
+        with contextlib.suppress(Conflicto):   # otro motor ya lo tomo: el candado es suyo
             almacen.borrar(CANDADO, si_version=hallado[1])
-        except Conflicto:
-            pass   # otro motor ya lo tomo: el candado es suyo
 
 
 def lanzar_motor(ambiente=None):
