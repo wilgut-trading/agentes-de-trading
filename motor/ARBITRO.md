@@ -46,7 +46,7 @@ Controles deterministas (código, sin modelo):
 | Datos | Una herramienta de datos falló durante el análisis | Reservas |
 | Niveles | Entrada o stop lejos del precio, o stop al lado equivocado | No operar |
 | Niveles | Sin stop legible, u objetivo al lado contrario | Reservas |
-| Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos | Reservas |
+| Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
 | Resultados | Hay presentación de resultados dentro de la ventana de 5 sesiones | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
 | Fecha | Es una fecha pasada: exploración, sin comprobar resultados | Reservas |

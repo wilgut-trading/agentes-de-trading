@@ -8,6 +8,7 @@ anterior. ~/.tradingagents se copia del bucket al disco del contenedor y se devu
 sesion ademas se sube en cuanto cambia, para que una caida a mitad de un analisis no deje
 en el bucket un token ya usado.
 """
+import contextlib
 import hashlib
 import logging
 import os
@@ -61,6 +62,7 @@ class Carpeta:
         self.base = f"{al.prefijo()}private/tradingagents/"
         self.vistos = {}
         self.lista = False   # antes de traerla, una sesion a medio escribir no se sube
+        self.turno = threading.RLock()   # el latido y el final no deben pisarse con un token viejo
 
     def _remota(self, relativa: str) -> str:
         # La sesion es una sola: tambien la vista previa usa la de produccion.
@@ -82,15 +84,16 @@ class Carpeta:
         self.lista = True
 
     def _subir(self, relativa):
-        ruta = self.casa / relativa
-        try:
-            datos = ruta.read_bytes()
-        except FileNotFoundError:
-            return
-        huella = hashlib.sha256(datos).digest()
-        if self.vistos.get(relativa) != huella:
-            self.tienda.escribir(self._remota(relativa), datos)
-            self.vistos[relativa] = huella
+        with self.turno:
+            ruta = self.casa / relativa
+            try:
+                datos = ruta.read_bytes()
+            except FileNotFoundError:
+                return
+            huella = hashlib.sha256(datos).digest()
+            if self.vistos.get(relativa) != huella:
+                self.tienda.escribir(self._remota(relativa), datos)
+                self.vistos[relativa] = huella
 
     def subir_sesion(self):
         if self.lista:
@@ -105,19 +108,41 @@ class Carpeta:
             except Exception:
                 log.exception("No se pudo guardar la sesion de ChatGPT")
                 if not espera:
-                    al.guardar_json(self.tienda, "estado/sesion.json", {"ok": False, "cuando": al.ahora()})
+                    _marcar_sesion(self.tienda, False)
                 time.sleep(espera)
         for ruta in self.casa.rglob("*") if self.lista else ():
             relativa = ruta.relative_to(self.casa).as_posix()
             if ruta.is_file() and not ruta.name.endswith((".lock", ".tmp")) and relativa != SESION_NOMBRE \
                     and not relativa.startswith("exploracion/"):
-                self._subir(relativa)
+                try:   # un archivo que falla no debe dejar sin guardar los demas
+                    self._subir(relativa)
+                except Exception:
+                    log.exception("No se pudo guardar %s", relativa)
+
+
+def _marcar_sesion(tienda, ok):
+    try:
+        al.guardar_json(tienda, "estado/sesion.json", {"ok": ok, "cuando": al.ahora()})
+    except Exception:
+        log.exception("No se pudo anotar el estado de la sesion")
+
+
+def _interrumpir(tienda):
+    """Lo que estaba corriendo se detuvo. Un backtest se reanuda; un analisis se relanza a mano."""
+    for t in al.trabajos(tienda):
+        if t["estado"] == "corriendo" and t["tipo"] == "backtest":
+            al.actualizar(tienda, t["id"], estado="pausado", etapa="Interrumpido. Pulsa Reactivar para seguir donde quedó.")
+        elif t["estado"] == "corriendo":
+            al.actualizar(tienda, t["id"], estado="fallido", etapa="Interrumpido",
+                          error="El motor se detuvo a mitad del trabajo. No se reintenta solo: lánzalo de nuevo.")
 
 
 def _latido(tienda, dueno, carpeta, parar):
-    while not parar.wait(LATIDO_S):
+    vueltas = 0
+    while not parar.wait(LATIDO_S / 15):   # la sesion se revisa cada 2 s; el candado, cada 30 s
+        vueltas += 1
         try:
-            if not al.tomar_candado(tienda, dueno):
+            if vueltas % 15 == 0 and not al.tomar_candado(tienda, dueno):
                 log.critical("Otro motor tomo el candado; salgo para no invalidar la sesion.")
                 carpeta.subir_sesion()
                 os._exit(3)
@@ -134,6 +159,8 @@ def _config():
 
 
 def _analizar(tienda, t, carpeta, simulado):
+    from datetime import date
+
     from motor import arbitro
     from tradingagents.agents.rating import run_rating
     from tradingagents.dataflows.symbols import crypto_base, normalize_symbol
@@ -147,10 +174,11 @@ def _analizar(tienda, t, carpeta, simulado):
     if t.get("usar_cartera"):
         datos = al.leer_json(tienda, f"{al.prefijo(t['ambiente'])}config/cartera.json")
         cartera = PortfolioContext.model_validate(datos) if datos else None
-    vivo = fecha == al.hoy() and not simulado
+    # Sabado o domingo no hay sesion que medir, salvo en cripto.
+    vivo = fecha == al.hoy() and not simulado and (date.fromisoformat(fecha).weekday() < 5 or bool(crypto_base(ticker)))
     registradas = TradingMemoryLog(config).load_entries()
     medicion = arbitro.historial(registradas)
-    previa = next((e for e in registradas if vivo and e["ticker"] == ticker and e["date"] == fecha), None)
+    previa = next((e for e in registradas if vivo and normalize_symbol(e["ticker"]) == normalize_symbol(ticker) and e["date"] == fecha), None)
     if not vivo:
         # Una fecha pasada no entra al historial: las noticias de ese dia no estan archivadas,
         # asi que no mediria lo mismo que una decision en vivo.
@@ -191,9 +219,9 @@ def _analizar(tienda, t, carpeta, simulado):
                   simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), version=grafo.run_settings()["version"])
 
 
-def _backtest(tienda, t):
+def _backtest(tienda, t, carpeta):
     from tradingagents.backtest import iter_grid, run_backtest, summarize
-    from tradingagents.llm_clients.chatgpt_auth import LOGIN_HINT, ChatGPTAuthError
+    from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError
     celdas = [(ti, f) for ti in t["tickers"] for f in iter_grid(t["desde"], t["hasta"], t["cada"])]
     fallos, r = [], None
     # De una en una: run_backtest se traga los errores de cada celda, y con un limite o una
@@ -204,9 +232,10 @@ def _backtest(tienda, t):
         for _, _, error in r.failures:
             if _es_limite(error):
                 raise RuntimeError("rate limit: " + error[:200])
-            if LOGIN_HINT in error or "sign" in error.lower() and "chatgpt" in error.lower():
+            if "tradingagents login chatgpt" in error:
                 raise ChatGPTAuthError(error[:200])
         fallos += r.failures
+        carpeta.devolver()   # si el motor cae, lo ya analizado no se repite
     if len(fallos) == len(celdas):
         raise RuntimeError(f"Fallaron los {len(fallos)} análisis: {fallos[0][2][:200]}")
     al.actualizar(tienda, t["id"], estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(),
@@ -216,28 +245,30 @@ def _backtest(tienda, t):
 
 def _pausar_todo(tienda, primero):
     for t in [primero, *al.en_cola(tienda, al.AMBIENTE)]:
-        al.sacar_de_cola(tienda, t["id"])
         al.actualizar(tienda, t["id"], estado="pausado", etapa=LIMITE)
+        al.sacar_de_cola(tienda, t["id"])
 
 
 def _atender(tienda, t, carpeta, simulado) -> bool:
     """Devuelve False si hay que dejar de procesar (limite del plan o sesion caida)."""
     from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError, ChatGPTUnreachable
-    al.sacar_de_cola(tienda, t["id"])
+    # Primero el estado: una caida entre los dos pasos no debe dejarlo "en cola" fuera de la cola.
     if not al.actualizar(tienda, t["id"], solo_si=("en_cola",), estado="corriendo", etapa="Preparando", iniciado=al.ahora()):
+        al.sacar_de_cola(tienda, t["id"])
         return True   # se cancelo justo antes de empezar
+    al.sacar_de_cola(tienda, t["id"])
     try:
-        _backtest(tienda, t) if t["tipo"] == "backtest" else _analizar(tienda, t, carpeta, simulado)
-        al.guardar_json(tienda, "estado/sesion.json", {"ok": True, "cuando": al.ahora()})
+        _backtest(tienda, t, carpeta) if t["tipo"] == "backtest" else _analizar(tienda, t, carpeta, simulado)
+        _marcar_sesion(tienda, True)
         return True
     except SystemExit:
-        al.actualizar(tienda, t["id"], estado="fallido", etapa="Interrumpido", error="El motor se detuvo a mitad del trabajo. Lánzalo de nuevo.")
+        _interrumpir(tienda)
         raise
     except ChatGPTUnreachable:
         al.actualizar(tienda, t["id"], estado="fallido", etapa="OpenAI no respondió", error="Tu sesión sigue bien. Lánzalo de nuevo más tarde.")
         return False
     except ChatGPTAuthError:
-        al.guardar_json(tienda, "estado/sesion.json", {"ok": False, "cuando": al.ahora()})
+        _marcar_sesion(tienda, False)
         al.actualizar(tienda, t["id"], estado="fallido", etapa="Sesión de ChatGPT no válida", error="Hay que volver a iniciar sesión. Mira README-AGENTES.md.")
         return False
     except Exception as exc:
@@ -255,19 +286,18 @@ def _encolar_diario(tienda):
     hallada = tienda.leer(f"{al.prefijo()}config/watchlist.txt")
     tickers = hallada[0].decode().split() if hallada else []
     try:
-        if arbitro.precio_referencia("SPY", fecha).get("fecha") != fecha:
+        ultima = arbitro.precio_referencia("SPY", fecha).get("fecha")
+        if ultima and ultima != fecha:   # sin dato no se concluye que estuviera cerrada
             log.info("Hoy no abrió la NYSE; no se encola nada.")
             return
     except Exception:
         log.warning("No se pudo comprobar si hubo mercado; se sigue.")
     for ticker in tickers:
         limpio = "".join(c if c.isalnum() else "-" for c in ticker.lower())
-        try:
+        with contextlib.suppress(al.Conflicto):
             al.encolar(tienda, {"tipo": "analisis", "ticker": ticker, "fecha": fecha, "rondas": 1, "usar_cartera": True,
                                 "analistas": (os.getenv("AGENTES_ANALISTAS") or "market,news,fundamentals").split(","), "origen": "diario"},
                        f"diario-{al.AMBIENTE}-{fecha}-{limpio}")
-        except al.Conflicto:
-            pass
 
 
 def _una_vuelta(tienda, dueno, simulado):
@@ -280,12 +310,19 @@ def _una_vuelta(tienda, dueno, simulado):
     latido = threading.Thread(target=_latido, args=(tienda, dueno, carpeta, parar), daemon=True)
     latido.start()
     resultado = True
+
+    def al_recibir_sigterm():
+        """El hilo principal puede estar esperando a un agente durante minutos, y el aviso de
+        Cloud Run da poco margen: se guarda todo aqui y se sale sin esperarlo."""
+        carpeta.devolver()
+        _interrumpir(tienda)
+        al.soltar_candado(tienda, dueno)
+        os._exit(143)
+    global _al_recibir_sigterm
+    _al_recibir_sigterm = al_recibir_sigterm
     try:
         carpeta.traer()
-        for t in al.trabajos(tienda):
-            if t["estado"] == "corriendo":   # tenemos el candado: su motor ya no existe
-                al.actualizar(tienda, t["id"], estado="fallido", etapa="Interrumpido",
-                              error="El motor se detuvo a mitad del trabajo. No se reintenta solo: lánzalo de nuevo.")
+        _interrumpir(tienda)   # tenemos el candado: lo que siga corriendo ya no tiene motor
         while pendientes := al.en_cola(tienda, al.AMBIENTE):
             sigue = _atender(tienda, pendientes[0], carpeta, simulado)
             carpeta.devolver()
@@ -298,6 +335,7 @@ def _una_vuelta(tienda, dueno, simulado):
         finally:
             parar.set()
             latido.join(timeout=60)   # un latido tardio no debe recrear el candado ya soltado
+            carpeta.subir_sesion()
             al.soltar_candado(tienda, dueno)
     return resultado
 
@@ -305,12 +343,17 @@ def _una_vuelta(tienda, dueno, simulado):
 def _cerrar_vista_previa(tienda):
     """Antes de borrar el Job de la vista previa: lo suyo no quedaria atendido por nadie."""
     for t in al.en_cola(tienda, "preview"):
-        al.sacar_de_cola(tienda, t["id"])
         al.actualizar(tienda, t["id"], estado="fallido", etapa="Cancelado", error="La vista previa se cerró.")
+        al.sacar_de_cola(tienda, t["id"])
+
+
+_al_recibir_sigterm = None
 
 
 def _salir(*_):
-    raise SystemExit(143)   # Cloud Run avisa con SIGTERM: asi corren los `finally` que guardan todo
+    if _al_recibir_sigterm:
+        _al_recibir_sigterm()
+    raise SystemExit(143)
 
 
 def main():

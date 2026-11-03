@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 COOKIE = "__session"
 DIAS = 5
-PUBLICAS = {"/login", "/manifest.webmanifest"}
+PUBLICAS = {"/login"}
 PREFIJOS_PUBLICOS = ("/static/",)
 CSP = "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 CSP_LOGIN = ("default-src 'self'; script-src 'self' https://www.gstatic.com; connect-src 'self' https://*.googleapis.com; "
@@ -80,6 +80,8 @@ def _origen_valido(request: Request) -> bool:
     permitidos = {o.strip() for o in os.getenv("AGENTES_ORIGENES", "").split(",") if o.strip()}
     if not en_la_nube():
         permitidos.add(f"{request.url.scheme}://{request.headers.get('host')}")
+    elif os.getenv("AGENTES_AMBIENTE") == "preview":   # su URL propia no se conoce antes de desplegar
+        permitidos.add(f"https://{request.headers.get('host')}")
     return origen in permitidos
 
 

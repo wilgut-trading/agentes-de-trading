@@ -2,6 +2,7 @@
 
 Criterios en motor/ARBITRO.md. No toca la calificacion del framework.
 """
+import contextlib
 import math
 import re
 import unicodedata
@@ -43,27 +44,42 @@ def proximos_resultados(ticker: str, fecha: str) -> str | None:
     if not fechas:
         raise LookupError("sin fecha de resultados")
     inicio = date.fromisoformat(fecha)
+    if all(f < inicio for f in fechas):   # solo fechas viejas: no se sabe la proxima
+        raise LookupError("sin fecha futura de resultados")
     for f in fechas:
         if inicio <= f <= inicio + timedelta(days=10):
             return f.isoformat()
     return None
 
 
-ETIQUETAS = {"entrada": r"Entry Price|Precio de entrada|Entrada", "stop": r"Stop[ -]?Loss|Stop de p[ée]rdidas?|Stop",
-             "objetivo": r"Price Target|Precio objetivo|Objetivo"}
+ETIQUETAS = {"entrada": r"Entry Price|Entry|Precio de entrada|Entrada", "stop": r"Stop[ -]?Loss|Stop de p[ée]rdidas?|Stop",
+             "objetivo": r"Price Target|Target Price|Target|Precio objetivo|Objetivo"}
+# En lo que escribe el framework, despues de estos campos solo viene texto libre del modelo.
+_COLA_LIBRE = re.compile(r"^\*\*(?:Position Sizing|Time Horizon)\*\*:", re.M)
 ACCIONES = {"buy": 1, "comprar": 1, "compra": 1, "hold": 0, "mantener": 0, "sell": -1, "vender": -1, "venta": -1}
 
 
+def _lineas(patron: str, texto: str) -> list[str]:
+    return re.findall(rf"^[\s>*_#\-]*(?:{patron})[\s*_]*[:=\u2013\u2014-]+[\s*_]*(.+)$", texto or "", re.I | re.M)
+
+
 def _ultimo(patron: str, texto: str):
-    """La ultima linea que lo declara: el razonamiento puede citar niveles viejos antes."""
-    hallados = re.findall(rf"^[\s>*_#\-]*(?:{patron})[\s*_]*[:=\u2013\u2014-]+[\s*_]*(.+)$", texto or "", re.I | re.M)
+    """La ultima linea que lo declara, sin contar la cola de texto libre: el razonamiento,
+    que va antes, puede citar niveles viejos; el dimensionamiento, despues, tambien."""
+    colas = list(_COLA_LIBRE.finditer(texto or ""))
+    hallados = _lineas(patron, texto[:colas[-1].start()] if colas else texto)
     return hallados[-1] if hallados else None
 
 
 def _nivel(texto: str, cual: str) -> float | None:
     valor = _ultimo(ETIQUETAS[cual], texto)
-    m = re.match(r"[~\u2248\s]*(?:USD|US\$|\$)?\s*(-?)\s*\$?([\d,]+(?:\.\d+)?)", valor or "", re.I)
-    return float(m.group(1) + m.group(2).replace(",", "")) if m else None
+    m = re.match(r"[~\u2248\s]*(?:USD|US\$|\$)?\s*(-?)\s*\$?(\d[\d,]*(?:\.\d+)?(?:e-?\d+)?)\s*(%?)", valor or "", re.I)
+    if not m or m.group(3):   # "5 %" no es un precio
+        return None
+    numero = m.group(2)
+    # 95,20 es decimal; 1,234 o 1,234,567 son miles.
+    numero = numero.replace(",", ".") if re.fullmatch(r"\d+,\d{1,2}", numero) else numero.replace(",", "")
+    return float(m.group(1) + numero)
 
 
 def _palabra(valor) -> str:
@@ -73,11 +89,13 @@ def _palabra(valor) -> str:
 
 def _accion(texto: str) -> int | None:
     final = re.findall(r"FINAL TRANSACTION PROPOSAL:\s*\**\s*(\w+)", texto or "", re.I)
-    return ACCIONES.get(_palabra(final[-1] if final else _ultimo(r"Action|Acci[oó]n", texto)))
+    etiquetas = _lineas(r"Action|Acci[oó]n", texto)   # el campo real es la primera linea
+    return ACCIONES.get(_palabra(final[-1] if final else etiquetas[0] if etiquetas else None))
 
 
 def _rating_en(texto: str) -> int | None:
-    return SENTIDO.get(_palabra(_ultimo(r"Recommendation|Recomendaci[oó]n|Rating|Calificaci[oó]n", texto)).capitalize())
+    etiquetas = _lineas(r"Recommendation|Recomendaci[oó]n|Rating|Calificaci[oó]n", texto)   # igual
+    return SENTIDO.get(_palabra(etiquetas[0]).capitalize()) if etiquetas else None
 
 
 def _reservas(controles, nombre, resultado, detalle):
@@ -129,7 +147,7 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
     if simbolo != ticker:
         _reservas(c, "Instrumento", RESERVAS, f"Escribiste {ticker} y se analizó {simbolo}. Comprueba que es el instrumento que querías.")
     if not vivo:
-        _reservas(c, "Fecha", RESERVAS, "Fecha pasada: es una exploración y no se comprobaron los resultados de la empresa.")
+        _reservas(c, "Fecha", RESERVAS, "Fecha pasada o sin sesión hoy: es una exploración y no se comprobaron los resultados de la empresa.")
     limite = 2 if crypto_base(ticker) else 4
     if not referencia:
         _reservas(c, "Frescura", NO_OPERAR, "No se pudo obtener un precio independiente.")
@@ -176,6 +194,8 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
             _reservas(c, "Coherencia", RESERVAS, f"No se pudo leer qué recomendó el {nombre}.")
         elif otro and sentido and otro != sentido:
             _reservas(c, "Coherencia", RESERVAS, f"El {nombre} recomendó el sentido contrario.")
+    if sentido and investigacion == 0 and trader == 0:
+        _reservas(c, "Coherencia", RESERVAS, "Ni el gerente de investigación ni el trader respaldan esta dirección.")
     if not sentido and investigacion and trader and investigacion != trader:
         _reservas(c, "Coherencia", RESERVAS, "El gerente de investigación y el trader recomendaron sentidos opuestos.")
 
@@ -271,7 +291,8 @@ def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, r
         "Eres árbitro imparcial. Falla cada objeción: sostenida o no, y si es grave (invalida la "
         f"operación) o leve. Sostén solo lo que la evidencia respalda. {_SEGURIDAD}\n{caso}\n"
         f"<objeciones>\n{lista}\n</objeciones>\n<replicas>\n{replicas}\n</replicas>")
-    fallos = {f.numero: f for f in sentencia.fallos}
+    # Si un numero viene dos veces, cuenta el fallo mas duro: un error no puede borrar uno grave.
+    fallos = {f.numero: f for f in sorted(sentencia.fallos, key=lambda f: (f.sostenida, f.gravedad == "grave"))}
     for i, o in enumerate(validas, 1):
         f = fallos.get(i)
         # Una objecion sin fallo no se da por rechazada: nunca se aprueba por omision.
@@ -294,13 +315,14 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
     except Exception:
         resultados = Ellipsis
     fecha_mercado = None
-    if not crypto_base(ticker) and normalize_symbol(ticker).isalnum():   # calendario de EE. UU.
-        try:
+    extra = list(extra)
+    if not crypto_base(ticker) and re.fullmatch(r"[A-Z0-9]+(-[A-Z])?", normalize_symbol(ticker)):   # calendario de EE. UU.
+        with contextlib.suppress(Exception):
             fecha_mercado = precio("SPY", fecha).get("fecha")
-        except Exception:
-            pass
+        if not fecha_mercado:
+            _reservas(extra, "Frescura", RESERVAS, "No se pudo comprobar la última sesión del mercado.")
     controles = controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
-                                        fallos_datos, medicion, vivo, reloj, fecha_mercado) + list(extra)
+                                        fallos_datos, medicion, vivo, reloj, fecha_mercado) + extra
     try:
         adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia)
     except Exception as exc:

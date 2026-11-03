@@ -17,8 +17,15 @@ Pega esto en Claude Code:
 
 ## 2. Prueba la vista previa
 
-Abre la URL que aparece en el PR. Verás la franja **VISTA PREVIA**. Usa tu sesión y tu cola, pero
-guarda informes y memoria aparte: tus datos reales no se tocan.
+La vista previa no se crea sola, porque usa tu sesión de ChatGPT y aún es código sin aprobar:
+
+1. Lee la explicación del paso 1.
+2. En el PR, abre **Actions**, entra en la corrida y pulsa **Review deployments**.
+3. Marca **vista-previa** y pulsa **Approve and deploy**.
+4. Cuando termine, abre la URL que aparece como comentario en el PR.
+
+Verás la franja **VISTA PREVIA**. Usa tu sesión y tu cola, pero guarda informes y memoria aparte: tus
+datos reales no se tocan.
 
 ## 3. Decide
 

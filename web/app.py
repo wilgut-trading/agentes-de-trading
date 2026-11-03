@@ -9,7 +9,6 @@ from pathlib import Path
 import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
-    FileResponse,
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -122,15 +121,10 @@ def login(request: Request):
     return plantillas.TemplateResponse(request, "login.html", {"firebase": firebase})
 
 
-@app.get("/manifest.webmanifest")
-def manifest():
-    return FileResponse(AQUI / "static/manifest.webmanifest", media_type="application/manifest+json")
-
-
 @app.get("/", response_class=HTMLResponse)
 def inicio(request: Request):
     lista = _propios("analisis")
-    pausados = any(t["estado"] == "pausado" for t in lista)
+    pausados = any(t["estado"] == "pausado" for t in lista + _propios("backtest"))
     # Tambien lo que quedo "corriendo" sin motor vivo: reactivar lo libera.
     varados = not al.candado_vivo(_tienda()) and (bool(al.en_cola(_tienda(), al.AMBIENTE)) or any(t["estado"] == "corriendo" for t in lista))
     return _ver(request, "inicio.html", hoy=al.hoy(), analistas=ANALISTAS, por_defecto=POR_DEFECTO, recientes=lista[:8],
@@ -139,7 +133,7 @@ def inicio(request: Request):
 
 @app.post("/analizar")
 def analizar(ticker: str = Form(), fecha: str = Form(""), rondas: int = Form(1),
-             analistas: list[str] = Form(default=[]), usar_cartera: str = Form("")):
+             analistas: list[str] = Form(default=[]), usar_cartera: str = Form("")):  # noqa: B008
     if not 1 <= rondas <= 3:
         raise HTTPException(422, "Las rondas van de 1 a 3.")
     t = al.encolar(_tienda(), {"tipo": "analisis", "ticker": _ticker(ticker), "fecha": _fecha(fecha or al.hoy()), "rondas": rondas,
@@ -215,7 +209,7 @@ def backtests(request: Request):
 
 @app.post("/backtests")
 def lanzar_backtest(tickers: str = Form(), desde: str = Form(), hasta: str = Form(), cada: int = Form(7),
-                    analistas: list[str] = Form(default=[]), confirmar: str = Form("")):
+                    analistas: list[str] = Form(default=[]), confirmar: str = Form("")):  # noqa: B008
     from tradingagents.backtest import iter_grid
     lista = _tickers(tickers)
     if not lista or cada < 1:
@@ -236,7 +230,8 @@ def lanzar_backtest(tickers: str = Form(), desde: str = Form(), hasta: str = For
 def _pr_pendiente():
     try:
         r = requests.get(f"https://api.github.com/repos/{REPO}/pulls?state=open&per_page=30", timeout=4)
-        return next((p for p in r.json() if p["head"]["ref"].startswith("actualizacion/")), None) if r.ok else None
+        # Solo ramas de este repo: cualquiera puede abrir un PR desde su fork con ese nombre.
+        return next((p for p in r.json() if p["head"]["ref"].startswith("actualizacion/") and p["head"]["repo"]["full_name"] == REPO), None) if r.ok else None
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return None
 

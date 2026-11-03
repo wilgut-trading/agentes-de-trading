@@ -4,6 +4,7 @@ Corre el grafo real de TradingAgents. Solo en local (`motor.run._simulado` lo im
 la nube) y todo lo que produce queda marcado como SIMULADO y fuera del historial.
 """
 from enum import Enum
+from types import SimpleNamespace
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
@@ -47,11 +48,6 @@ def _construir(schema: type[BaseModel]):
     return schema.model_validate(campos)
 
 
-class _Cliente:
-    def get_llm(self):
-        return Falso()
-
-
 def instalar():
     import tradingagents.graph.trading_graph as tg
-    tg.create_tier_client = lambda *a, **k: _Cliente()
+    tg.create_tier_client = lambda *a, **k: SimpleNamespace(get_llm=Falso)

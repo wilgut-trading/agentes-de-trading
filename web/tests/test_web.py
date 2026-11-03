@@ -138,3 +138,27 @@ def test_backtest_pide_confirmacion_y_tope(dentro):
     assert dentro.post("/backtests", data=base).status_code == 422
     assert dentro.post("/backtests", data={**base, "confirmar": "2"}, follow_redirects=False).status_code == 303
     assert dentro.post("/backtests", data={**base, "cada": 1, "desde": "2020-01-01", "confirmar": "9"}).status_code == 422
+
+
+def test_r2_c8_vista_previa_puede_entrar_y_otros_origenes_no(monkeypatch):
+    from starlette.requests import Request
+    monkeypatch.setenv("K_SERVICE", "agentes-web")
+    monkeypatch.setenv("AGENTES_AMBIENTE", "preview")
+
+    def peticion(origen):
+        return Request({"type": "http", "method": "POST", "path": "/login", "scheme": "https", "query_string": b"", "server": ("p.run.app", 443),
+                        "headers": [(b"host", b"p.run.app"), (b"origin", origen.encode())]})
+    assert acceso._origen_valido(peticion("https://p.run.app"))
+    assert not acceso._origen_valido(peticion("https://malo.test"))
+    monkeypatch.setenv("AGENTES_AMBIENTE", "prod")
+    assert not acceso._origen_valido(peticion("https://p.run.app"))
+
+
+def test_r2_c9_pr_de_un_fork_no_cuenta(monkeypatch):
+    class R:
+        ok = True
+
+        def json(self):
+            return [{"head": {"ref": "actualizacion/v9", "repo": {"full_name": "atacante/fork"}}, "html_url": "x"}]
+    monkeypatch.setattr(modulo.requests, "get", lambda *a, **k: R())
+    assert modulo._pr_pendiente() is None

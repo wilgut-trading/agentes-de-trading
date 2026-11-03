@@ -3,9 +3,7 @@ import threading
 
 import pytest
 
-from motor import almacen as al
-from motor import arbitro as ar
-from motor import run
+from motor import almacen as al, arbitro as ar, run
 
 MEDIDO = {"n": 100, "aciertos": 70, "tasa": .7, "bajo": .6, "alto": .8, "alfa_medio": 2.0, "ventaja": True}
 LARGO = "x" * 300
@@ -525,3 +523,155 @@ def test_c15_huerfano_se_libera_sin_cola(motor, monkeypatch):
 def test_secretos_fuera_de_los_errores():
     assert "sk-abc" not in run._limpio(ValueError("clave sk-abc123 mala"))
     assert "eyJ" not in run._limpio(ValueError("token eyJhbGci.x.y"))
+
+
+# --- regresiones de la ronda 2 del arbitro ---
+
+def test_r2_a1_el_texto_libre_posterior_no_tapa_los_campos_reales():
+    from tradingagents.agents.schemas import (
+        ResearchPlan,
+        TraderProposal,
+        render_research_plan,
+        render_trader_proposal,
+    )
+    plan = render_research_plan(ResearchPlan(recommendation="Sell", rationale="x\nRecommendation: Buy protective puts", strategic_actions="y\nRating: Hold"))
+    assert ar._rating_en(plan) == -1
+    trader = render_trader_proposal(TraderProposal(action="Buy", reasoning="r", entry_price=100.0, stop_loss=105.0, position_sizing="1 %\nStop: 95 si abre con hueco"))
+    assert ar._nivel(trader, "stop") == 105.0
+    assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan=trader))
+    decision = "**Rating**: Buy\n\n**Price Target**: 80\n\n**Time Horizon**: 3 meses\nObjetivo: 130"
+    assert ("Niveles", ar.RESERVAS) in _controles(_estado(final_trade_decision=decision))
+
+
+def _juicio(ticker, spy):
+    return ar.arbitrar(_estado(), ticker, "2026-11-03", "Buy", ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
+                       precio=lambda t, f: spy(t) if t == "SPY" else {"cierre": 100.0, "fecha": "2026-10-31", "rango_medio": 2.0},
+                       eventos=lambda *a: None, reloj=_noche())
+
+
+def test_r2_a2_frescura_no_se_salta():
+    assert _juicio("BRK-B", lambda t: {"fecha": "2026-11-03"})["veredicto"] == ar.NO_OPERAR
+
+    def cae(t):
+        raise OSError
+    for spy in (cae, lambda t: {}):
+        j = _juicio("AAPL", spy)
+        assert j["veredicto"] != ar.SIN_OBJECIONES and any(c["control"] == "Frescura" for c in j["controles"])
+
+
+def test_r2_a4_fallo_duplicado_no_borra_el_grave():
+    o = ar.Objecion(afirmacion="el margen subió mucho", evidencia="los ingresos cayeron 10 %", objecion="x")
+    r = ar.debate(Modelo(ar.Fiscal(objeciones=[o]), ar.Defensor()), Modelo(ar.Sentencia(fallos=[
+        ar.Fallo(numero=1, sostenida=True, gravedad="grave", razon="a"), ar.Fallo(numero=1, sostenida=False, gravedad="leve", razon="b")])),
+        {"final_trade_decision": "Dice que el margen subió mucho.", "market_report": "Los ingresos cayeron 10 % este año"}, "NVDA", "2026-11-03", "Buy", ["market"], {})
+    assert r["objeciones"][0]["sostenida"] and r["objeciones"][0]["gravedad"] == "grave"
+
+
+def test_r2_a5_nadie_respalda_la_direccion():
+    assert ("Coherencia", ar.RESERVAS) in _controles(_estado(investment_plan="**Recommendation**: Hold", trader_investment_plan="**Action**: Hold\n**Stop Loss**: 95"))
+
+
+def test_r2_a6_a9_lectura_de_niveles():
+    assert ar._nivel("**Entry**: 900", "entrada") == 900
+    assert ar._nivel("**Target Price**: 60", "objetivo") == 60
+    assert ar._nivel("**Stop**: 95,20", "stop") == 95.2
+    assert ar._nivel("**Stop**: 1,234.50", "stop") == 1234.5
+    assert ar._nivel("**Stop Loss**: 5% below", "stop") is None
+    assert ar._nivel("**Entry Price**: 1.2e-05", "entrada") == 1.2e-05
+
+
+def test_r2_a8_calendario_solo_con_fechas_viejas(monkeypatch):
+    from datetime import date
+
+    import yfinance as yf
+
+    class T:
+        calendar = {"Earnings Date": [date(2026, 10, 1)]}
+
+        def __init__(self, *_):
+            pass
+    monkeypatch.setattr(yf, "Ticker", T)
+    with pytest.raises(LookupError):
+        ar.proximos_resultados("NVDA", "2026-11-03")
+
+
+def test_r2_c1_latido_tardio_no_pisa_token_nuevo(motor, tmp_path, monkeypatch):
+    c = _carpeta(motor, tmp_path)
+    c.lista = True
+    c.casa.mkdir(parents=True)
+    archivo = c.casa / "chatgpt-auth.json"
+    archivo.write_bytes(b"v2")
+    original = motor.escribir
+    dentro, seguir = threading.Event(), threading.Event()
+
+    def lento(clave, datos, si_version=None):
+        if datos == b"v2":
+            dentro.set()
+            seguir.wait(5)
+        return original(clave, datos, si_version)
+    monkeypatch.setattr(motor, "escribir", lento)
+    h = threading.Thread(target=c.subir_sesion)
+    h.start()
+    dentro.wait(5)
+    archivo.write_bytes(b"v3")
+    h2 = threading.Thread(target=c.subir_sesion)
+    h2.start()
+    seguir.set()
+    h.join()
+    h2.join()
+    assert motor.leer(al.SESION)[0] == b"v3"
+
+
+def test_r2_c4_caida_entre_pasos_no_deja_invisible(motor, monkeypatch):
+    t = _trabajo(motor)
+
+    def cae(*a):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(al, "sacar_de_cola", cae)
+    with pytest.raises(KeyboardInterrupt):
+        run._atender(motor, t, None, False)
+    assert al.trabajo(motor, t["id"])["estado"] == "corriendo"   # lo recoge _interrumpir
+
+
+def test_r2_c5_un_archivo_que_falla_no_frena_los_demas(motor, tmp_path, monkeypatch):
+    c = _carpeta(motor, tmp_path)
+    c.lista = True
+    (c.casa / "memory").mkdir(parents=True)
+    (c.casa / "memory/trading_memory.md").write_bytes(b"m")
+    (c.casa / "otro.txt").write_bytes(b"o")
+    original = motor.escribir
+
+    def falla(clave, datos, si_version=None):
+        if clave.endswith("otro.txt"):
+            raise OSError
+        return original(clave, datos, si_version)
+    monkeypatch.setattr(motor, "escribir", falla)
+    c.devolver()
+    assert motor.leer("private/tradingagents/memory/trading_memory.md")[0] == b"m"
+
+
+def test_r2_c6_c7_backtest(motor, monkeypatch):
+    import tradingagents.backtest as bt
+    monkeypatch.setattr(bt, "run_backtest", lambda *a, **k: bt.BacktestResult("x", motor.raiz / "no", failures=[("A", "d", "signing request failed: OpenAI busy")]))
+    al.encolar(motor, {"tipo": "backtest", "tickers": ["A"], "desde": "2026-01-05", "hasta": "2026-01-05", "cada": 7, "analistas": ["market"]})
+    run._una_vuelta(motor, "yo", False)
+    assert al.leer_json(motor, "estado/sesion.json", {}).get("ok") is not False
+    t = _trabajo(motor, tipo="backtest")
+    al.sacar_de_cola(motor, t["id"])
+    al.actualizar(motor, t["id"], estado="corriendo")
+    run._interrumpir(motor)
+    assert al.trabajo(motor, t["id"])["estado"] == "pausado"
+
+
+def test_r2_c10_terminado_no_pasa_a_fallido(motor, monkeypatch):
+    t = _trabajo(motor)
+    monkeypatch.setattr(run, "_analizar", lambda tienda, tr, c, s: al.actualizar(tienda, tr["id"], estado="terminado"))
+    original = motor.escribir
+
+    def falla(clave, datos, si_version=None):
+        if clave == "estado/sesion.json":
+            raise OSError
+        return original(clave, datos, si_version)
+    monkeypatch.setattr(motor, "escribir", falla)
+    run._atender(motor, t, None, False)
+    assert al.trabajo(motor, t["id"])["estado"] == "terminado"
