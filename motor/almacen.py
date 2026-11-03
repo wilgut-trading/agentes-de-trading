@@ -6,7 +6,9 @@ candado: dos procesos que compiten solo pueden ganar uno. `si_version=0` signifi
 """
 import json
 import os
+import random
 import re
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,8 +46,11 @@ class Local:
     def leer(self, clave):
         ruta = self._ruta(clave)
         try:
-            datos = ruta.read_bytes()
-            return datos, ruta.stat().st_mtime_ns
+            while True:   # contenido y version deben ser de la misma escritura
+                antes = ruta.stat().st_mtime_ns
+                datos = ruta.read_bytes()
+                if ruta.stat().st_mtime_ns == antes:
+                    return datos, antes
         except FileNotFoundError:
             return None
 
@@ -73,7 +78,6 @@ class Local:
 
     @staticmethod
     def _cerrar(cerrojo):
-        import time
         limite = time.monotonic() + 10
         while True:
             try:
@@ -174,7 +178,8 @@ def _ruta_run(id_):
 
 def _cambiar_cola(almacen, cambio):
     """Aplica `cambio` a la lista de ids sin pisar otro cambio simultaneo."""
-    for _ in range(12):
+    for intento in range(30):
+        time.sleep(random.random() * 0.02 * intento)
         hallado = almacen.leer(COLA)
         ids = json.loads(hallado[0]) if hallado else []
         nuevos = cambio(list(ids))
