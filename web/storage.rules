@@ -1,0 +1,7 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // El navegador nunca toca el bucket: todo pasa por rutas autenticadas de la web.
+    match /{todo=**} { allow read, write: if false; }
+  }
+}

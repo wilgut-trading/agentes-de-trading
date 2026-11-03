@@ -1,0 +1,5 @@
+<div id="avance" hx-get="/analisis/{{ t.id }}/avance" hx-trigger="every 3s" hx-swap="outerHTML">
+<p class="etapa">{{ t.etapa }}</p><progress value="{{ t.avance or 0 }}" max="100"></progress>
+{% if t.estado == 'corriendo' and not candado %}<p class="aviso">El motor dejó de responder. Si no vuelve en unos minutos, lanza el análisis de nuevo.</p>{% endif %}
+{% if t.aviso %}<p class="aviso">{{ t.aviso }}</p>{% endif %}
+<p class="nota">{{ 'Empezó: ' ~ t.iniciado if t.iniciado else 'Esperando turno: los análisis corren de uno en uno.' }} Puedes cerrar esta pantalla y volver luego.</p></div>

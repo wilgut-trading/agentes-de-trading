@@ -1,0 +1,28 @@
+name: Vista previa
+description: Revisión sin tráfico con etiqueta preview y Job propio. Comparte cola y sesión; sus datos van en preview/.
+inputs:
+  proyecto: {required: true}
+  proveedor: {required: true}
+  cuenta: {required: true}
+  bucket: {required: true}
+outputs:
+  url: {value: "${{ steps.d.outputs.url }}"}
+runs:
+  using: composite
+  steps:
+    - uses: google-github-actions/auth@v2
+      with: {workload_identity_provider: "${{ inputs.proveedor }}", service_account: "${{ inputs.cuenta }}"}
+    - uses: google-github-actions/setup-gcloud@v2
+    - id: d
+      shell: bash
+      env: {PROYECTO: "${{ inputs.proyecto }}", BUCKET: "${{ inputs.bucket }}"}
+      run: |
+        REGION=us-central1
+        IMAGEN="$REGION-docker.pkg.dev/$PROYECTO/agentes/agentes:preview-$GITHUB_SHA"
+        gcloud auth configure-docker "$REGION-docker.pkg.dev" -q
+        docker build -t agentes-base . && docker build -f Dockerfile.web --build-arg BASE=agentes-base -t "$IMAGEN" . && docker push "$IMAGEN"
+        ENTORNO="AGENTES_BUCKET=$BUCKET,AGENTES_AMBIENTE=preview,GOOGLE_CLOUD_PROJECT=$PROYECTO"
+        gcloud run jobs deploy agentes-motor-preview --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --service-account "agentes-motor@$PROYECTO.iam.gserviceaccount.com" --set-env-vars "$ENTORNO"
+        gcloud run deploy agentes-web --region "$REGION" --image "$IMAGEN" --tag preview --no-traffic --update-env-vars "$ENTORNO"
+        URL=$(gcloud run services describe agentes-web --region "$REGION" --format='value(status.traffic.filter("tag","preview").url)' 2>/dev/null || true)
+        echo "url=$URL" >> "$GITHUB_OUTPUT"

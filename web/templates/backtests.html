@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block cuerpo %}
+<h1>Backtests</h1>
+<form method="post" class="tarjeta"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Tickers<input name="tickers" required placeholder="NVDA, MSFT"></label><label>Desde<input type="date" name="desde" required max="{{ hoy }}"></label><label>Hasta<input type="date" name="hasta" required max="{{ hoy }}"></label><label>Cada cuántos días<input type="number" name="cada" min="1" value="7"></label>
+<fieldset><legend>Analistas</legend>{% for k, n in analistas.items() %}<label class="chk"><input type="checkbox" name="analistas" value="{{ k }}"{{ ' checked' if k in por_defecto }}> {{ n }}</label>{% endfor %}</fieldset>
+<label>Número de análisis (tickers × fechas), para confirmar<input name="confirmar" required inputmode="numeric"></label><p class="nota">Máximo {{ maximo }}. Cada análisis gasta cuota de tu plan. Las noticias de fechas pasadas no están archivadas, así que estos resultados son orientativos.</p><button class="primario">Lanzar</button></form>
+{% for t in lista %}<section class="tarjeta"><b>{{ t.tickers|join(', ') }}</b> {{ t.desde }} a {{ t.hasta }}: {{ t.etapa }}{% if t.error %}<p class="aviso">{{ t.error }}</p>{% endif %}
+{% if t.resumen %}<pre>{{ t.resumen }}</pre>{% endif %}{% if t.fallos %}<p class="aviso">{{ t.fallos }} análisis fallaron.</p>{% endif %}</section>{% else %}<p class="nota">Aún no hay backtests.</p>{% endfor %}
+{% endblock %}

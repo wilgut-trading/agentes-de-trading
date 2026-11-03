@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block cuerpo %}
+<h1>Ajustes</h1>{% if aviso %}<p class="ok">{{ aviso }}</p>{% endif %}
+<section class="tarjeta"><h2>Versión de TradingAgents</h2><p>Instalada: v{{ version }}.{% if pr %} <a href="{{ pr.html_url }}" rel="noopener">Hay una versión nueva pendiente de tu revisión.</a> Nada se instala sin tu aprobación.{% endif %}</p>
+<p>Último respaldo: {{ respaldo.fecha if respaldo else 'ninguno todavía' }}.</p></section>
+<section class="tarjeta"><h2>Sesión de ChatGPT</h2>{% if sesion %}<p>{{ 'Funcionando' if sesion.ok else 'Caducada: hay que volver a iniciar sesión' }} ({{ sesion.cuando }}).</p>{% else %}<p>Aún sin uso.</p>{% endif %}</section>
+<form method="post" action="/ajustes/watchlist" class="tarjeta"><input type="hidden" name="csrf" value="{{ csrf }}"><h2>Watchlist diaria</h2><p class="nota">Se analiza de lunes a viernes a las 17:30, hora de Lima, salvo feriados de NYSE. Empieza con 3 a 5 tickers.</p><label>Tickers<input name="tickers" value="{{ watchlist|join(', ') }}"></label><button class="primario">Guardar</button></form>
+<form method="post" action="/ajustes/cartera" class="tarjeta"><input type="hidden" name="csrf" value="{{ csrf }}"><h2>Cartera</h2><p class="nota">Formato: cash, currency y positions con ticker, quantity y average_price.</p><textarea name="cartera" rows="9" spellcheck="false">{{ cartera }}</textarea><button class="primario">Guardar</button></form>
+{% endblock %}

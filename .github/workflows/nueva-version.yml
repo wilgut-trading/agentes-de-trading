@@ -1,0 +1,85 @@
+# Solo avisa: nunca fusiona ni despliega a produccion. Prepara un PR en borrador y una vista previa.
+name: Nueva version de TradingAgents
+on:
+  schedule: [{cron: "0 13 * * 1"}]
+  workflow_dispatch:
+    inputs:
+      version: {description: "Versión concreta (por ejemplo v0.7.2). Vacío = la última.", required: false}
+permissions: {contents: write, pull-requests: write, id-token: write}
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    env: {GH_TOKEN: "${{ github.token }}", ELEGIDA: "${{ inputs.version }}"}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Comparar versiones
+        id: v
+        run: |
+          ACTUAL=$(cat VERSION_BASE.txt)
+          NUEVA="${ELEGIDA:-$(gh api repos/TauricResearch/TradingAgents/releases/latest --jq .tag_name)}"
+          case "$NUEVA" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "Versión no válida"; exit 1;; esac
+          RAMA="actualizacion/$NUEVA"
+          echo "nueva=$NUEVA" >> "$GITHUB_OUTPUT"; echo "actual=$ACTUAL" >> "$GITHUB_OUTPUT"; echo "rama=$RAMA" >> "$GITHUB_OUTPUT"
+          SEGUIR=true
+          [ "$NUEVA" = "$ACTUAL" ] && SEGUIR=false
+          # Una version descartada (PR cerrado sin fusionar) no se vuelve a proponer, salvo a mano.
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ -n "$(gh pr list --head "$RAMA" --state closed --json number --jq '.[0].number')" ]; then SEGUIR=false; fi
+          echo "seguir=$SEGUIR" >> "$GITHUB_OUTPUT"
+      - name: Fusionar ese tag en una rama
+        if: steps.v.outputs.seguir == 'true'
+        id: rama
+        env: {NUEVA: "${{ steps.v.outputs.nueva }}", RAMA: "${{ steps.v.outputs.rama }}"}
+        run: |
+          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/TauricResearch/TradingAgents.git
+          git fetch upstream "refs/tags/$NUEVA:refs/tags/$NUEVA"
+          git switch -C "$RAMA"
+          CONFLICTO=false
+          git merge --no-edit "$NUEVA" || { CONFLICTO=true; git merge --abort; }
+          echo "conflicto=$CONFLICTO" >> "$GITHUB_OUTPUT"
+          echo "$NUEVA" > VERSION_BASE.txt; git add VERSION_BASE.txt; git commit -m "Propone TradingAgents $NUEVA" || true
+          git push --force-with-lease origin "$RAMA"
+      - name: Pruebas
+        if: steps.v.outputs.seguir == 'true' && steps.rama.outputs.conflicto == 'false'
+        id: t
+        run: |
+          pip install uv && uv venv --python 3.13 && uv pip install -e . -r web/requirements.txt pytest pytest-subtests httpx
+          .venv/bin/python -m pytest tests -q > original.txt 2>&1 && echo "original=ok" >> "$GITHUB_OUTPUT" || echo "original=falla" >> "$GITHUB_OUTPUT"
+          .venv/bin/python -m pytest web/tests/test_contrato.py -q > contrato.txt 2>&1 && echo "contrato=ok" >> "$GITHUB_OUTPUT" || echo "contrato=falla" >> "$GITHUB_OUTPUT"
+      - name: Vista previa
+        id: p
+        if: steps.t.outputs.contrato == 'ok' && vars.GCP_PROYECTO != ''
+        continue-on-error: true
+        uses: ./.github/acciones/vista-previa
+        with:
+          proyecto: ${{ vars.GCP_PROYECTO }}
+          proveedor: ${{ vars.GCP_WIF_PROVIDER }}
+          cuenta: ${{ vars.GCP_CUENTA_DESPLIEGUE }}
+          bucket: ${{ vars.AGENTES_BUCKET }}
+      - name: PR en borrador
+        if: steps.v.outputs.seguir == 'true'
+        env:
+          NUEVA: ${{ steps.v.outputs.nueva }}
+          ACTUAL: ${{ steps.v.outputs.actual }}
+          RAMA: ${{ steps.v.outputs.rama }}
+          CONFLICTO: ${{ steps.rama.outputs.conflicto }}
+          ORIGINAL: ${{ steps.t.outputs.original }}
+          CONTRATO: ${{ steps.t.outputs.contrato }}
+          URL: ${{ steps.p.outputs.url }}
+        run: |
+          {
+            echo "## TradingAgents $ACTUAL → $NUEVA"
+            echo; echo "**Nada se instala hasta que lo apruebes.** Pasos en ACTUALIZAR.md."
+            [ "$CONFLICTO" = true ] && echo && echo "🔴 **La fusión tiene conflictos**: hay que resolverlos antes de probar."
+            [ "$CONTRATO" = falla ] && echo && echo "🔴 **Tests de contrato en rojo.** Pantallas afectadas abajo."
+            echo; echo "- Pruebas del proyecto original: ${ORIGINAL:-no ejecutadas}"; echo "- Tests de contrato: ${CONTRATO:-no ejecutados}"; echo "- Vista previa: ${URL:-no desplegada}"
+            echo; echo "### Novedades"; git show "$NUEVA:CHANGELOG.md" 2>/dev/null | awk -v a="${ACTUAL#v}" 'index($0,"## ")==1 && index($0,a){exit} {print}' | head -150
+            echo; echo "### Archivos originales que cambiaron"; echo '```'; git diff --stat "$ACTUAL" "$NUEVA" 2>/dev/null | tail -40; echo '```'
+            [ -f contrato.txt ] && { echo "### Tests de contrato"; echo '```'; tail -30 contrato.txt; echo '```'; }
+          } > cuerpo.md
+          if [ -n "$(gh pr list --head "$RAMA" --state open --json number --jq '.[0].number')" ]; then
+            gh pr edit "$RAMA" --body-file cuerpo.md
+          else
+            gh pr create --draft --head "$RAMA" --title "Actualizar TradingAgents a $NUEVA" --body-file cuerpo.md
+          fi

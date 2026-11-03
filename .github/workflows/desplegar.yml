@@ -1,0 +1,56 @@
+# Push a main: pruebas de contrato, respaldo si cambia la version, imagen nueva y despliegue.
+name: Desplegar
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+permissions: {contents: read, id-token: write}
+concurrency: {group: desplegar}
+jobs:
+  desplegar:
+    if: vars.GCP_PROYECTO != ''
+    runs-on: ubuntu-latest
+    env:
+      PROYECTO: ${{ vars.GCP_PROYECTO }}
+      REGION: us-central1
+      IMAGEN: us-central1-docker.pkg.dev/${{ vars.GCP_PROYECTO }}/agentes/agentes:${{ github.sha }}
+      BUCKET: ${{ vars.AGENTES_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Pruebas (si fallan, no se despliega)
+        run: |
+          uv venv --python 3.13 && uv pip install -e . -r web/requirements.txt pytest httpx
+          .venv/bin/python -m pytest web/tests motor/tests -q
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CUENTA_DESPLIEGUE }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Imagen
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev -q
+          docker build -t agentes-base .
+          docker build -f Dockerfile.web --build-arg BASE=agentes-base -t "$IMAGEN" .
+          docker push "$IMAGEN"
+      - name: Respaldo si cambia la version de TradingAgents
+        run: |
+          VERSION=$(cat VERSION_BASE.txt)
+          ANTERIOR=$(gcloud storage cat "gs://$BUCKET/respaldos/version.txt" 2>/dev/null || true)
+          if [ "$VERSION" != "$ANTERIOR" ] && [ -n "$ANTERIOR" ]; then
+            FECHA=$(date +%F)
+            gcloud storage rsync -r -x 'chatgpt-auth\.json$' "gs://$BUCKET/private/tradingagents" "gs://$BUCKET/respaldos/$FECHA-$VERSION"
+            echo "{\"fecha\":\"$FECHA\",\"version\":\"$VERSION\"}" | gcloud storage cp - "gs://$BUCKET/respaldos/ultimo.json"
+          fi
+          echo "$VERSION" | gcloud storage cp - "gs://$BUCKET/respaldos/version.txt"
+      - name: Motor y web
+        run: |
+          COMUNES="AGENTES_BUCKET=$BUCKET,AGENTES_AMBIENTE=prod,GOOGLE_CLOUD_PROJECT=$PROYECTO,AGENTES_ANALISTAS=${{ vars.AGENTES_ANALISTAS }}"
+          gcloud run jobs update agentes-motor --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --update-env-vars "$COMUNES"
+          gcloud run deploy agentes-web --region "$REGION" --image "$IMAGEN" --min-instances 0 --allow-unauthenticated --update-env-vars "$COMUNES"
+      - name: Hosting
+        run: npx -y firebase-tools@14 deploy --only hosting,storage --project "$PROYECTO" --non-interactive
+      - name: Borrar vista previa
+        run: |
+          gcloud run jobs delete agentes-motor-preview --region "$REGION" -q || true
+          gcloud run services update-traffic agentes-web --region "$REGION" --remove-tags preview || true

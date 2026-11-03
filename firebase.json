@@ -1,0 +1,8 @@
+{
+  "hosting": {
+    "public": "web/static-hosting",
+    "ignore": ["**/*"],
+    "rewrites": [{"source": "**", "run": {"serviceId": "agentes-web", "region": "us-central1"}}]
+  },
+  "storage": {"rules": "web/storage.rules"}
+}

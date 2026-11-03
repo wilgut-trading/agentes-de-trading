@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block cuerpo %}
+<h1>Historial</h1>
+<section class="tarjeta"><h2>¿Tiene ventaja?</h2>
+{% if m.n < minimo %}<p><b>Todavía no se sabe.</b> {{ m.n }} de {{ minimo }} decisiones con dirección medidas.</p>
+{% else %}<p><b>{{ 'Hay ventaja medida' if m.ventaja else 'Sin ventaja demostrada' }}.</b></p>{% endif %}
+{% if m.n %}<p>Acierto: {{ '%.0f'|format(m.tasa*100) }} % ({{ m.aciertos }} de {{ m.n }}), con margen real de {{ '%.0f'|format(m.bajo*100) }} % a {{ '%.0f'|format(m.alto*100) }} %. Alfa medio a favor de la dirección: {{ '%+.2f'|format(m.alfa_medio) }} %.</p>{% endif %}
+<p class="nota">Solo decisiones en vivo ya liquidadas, medidas frente al índice desde el primer cierre posterior. Mantener no cuenta porque no afirma dirección.</p></section>
+<form method="get" class="filtros"><input name="ticker" value="{{ ticker }}" placeholder="Ticker"><select name="decision"><option value="">Todas</option>{% for r in ratings %}<option {{ 'selected' if r == decision }}>{{ r }}</option>{% endfor %}</select><button>Filtrar</button></form>
+{% for e in filas %}<details><summary>{{ e.date }} · {{ e.ticker }} · {{ e.rating }} · {{ 'pendiente' if e.pending else 'retorno ' ~ e.raw ~ ', alfa ' ~ e.alpha }}</summary>{% if e.reflection %}<h3>Reflexión</h3><div class="md">{{ e.reflection|md }}</div>{% endif %}<h3>Decisión</h3><div class="md">{{ e.decision|md }}</div></details>{% else %}<p class="nota">Sin decisiones.</p>{% endfor %}
+{% endblock %}

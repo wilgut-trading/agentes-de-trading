@@ -1,0 +1,25 @@
+name: Volver atrás
+on:
+  workflow_dispatch:
+    inputs:
+      imagen: {description: "Etiqueta de imagen anterior (el commit)", required: true}
+      respaldo: {description: "Carpeta de respaldo a restaurar (vacío = no restaurar)", required: false}
+permissions: {contents: read, id-token: write}
+jobs:
+  volver:
+    runs-on: ubuntu-latest
+    env: {PROYECTO: "${{ vars.GCP_PROYECTO }}", BUCKET: "${{ vars.AGENTES_BUCKET }}", ETIQUETA: "${{ inputs.imagen }}", RESPALDO: "${{ inputs.respaldo }}"}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with: {workload_identity_provider: "${{ vars.GCP_WIF_PROVIDER }}", service_account: "${{ vars.GCP_CUENTA_DESPLIEGUE }}"}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          case "$ETIQUETA" in *[!a-zA-Z0-9._-]*) echo "Etiqueta no válida"; exit 1;; esac
+          IMAGEN="us-central1-docker.pkg.dev/$PROYECTO/agentes/agentes:$ETIQUETA"
+          gcloud run jobs update agentes-motor --region us-central1 --image "$IMAGEN"
+          gcloud run deploy agentes-web --region us-central1 --image "$IMAGEN"
+      - if: inputs.respaldo != ''
+        run: |
+          case "$RESPALDO" in *[!a-zA-Z0-9._-]*) echo "Carpeta no válida"; exit 1;; esac
+          # La sesion de ChatGPT nunca se restaura: un token viejo la invalidaria.
+          gcloud storage rsync -r -x 'chatgpt-auth\.json$' "gs://$BUCKET/respaldos/$RESPALDO" "gs://$BUCKET/private/tradingagents"

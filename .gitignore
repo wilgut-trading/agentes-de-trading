@@ -221,3 +221,13 @@ __marimo__/
 # Enterprise env file (secrets) and generated run reports
 .env.enterprise
 reports/
+
+# Agentes de Trading: nada personal en este fork publico
+.env*
+!.env.example
+data/
+*portfolio*.json
+chatgpt-auth.json
+service-account*.json
+PROMPT.md
+.claude/

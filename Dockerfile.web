@@ -1,0 +1,15 @@
+# Parte de la imagen que construye el Dockerfile original, sin cambiarlo:
+#   docker build -t agentes-base .
+#   docker build -f Dockerfile.web --build-arg BASE=agentes-base -t agentes .
+ARG BASE=agentes-base
+FROM ${BASE}
+USER root
+COPY web/requirements.txt /tmp/requisitos.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requisitos.txt
+COPY web /home/appuser/app/web
+COPY motor /home/appuser/app/motor
+USER appuser
+WORKDIR /home/appuser/app
+ENV TRADINGAGENTS_NO_UPDATE_CHECK=1 TRADINGAGENTS_LLM_PROVIDER=chatgpt
+ENTRYPOINT []
+CMD ["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

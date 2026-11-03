@@ -1,0 +1,12 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{% block titulo %}Agentes de Trading{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/static/icono-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Agentes de Trading"><meta name="theme-color" content="#0A0B0D">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false}'>
+<script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head><body hx-headers='{"X-CSRF":"{{ csrf }}"}'>
+{% if ambiente == 'preview' %}<div class="franja">VISTA PREVIA v{{ version }}</div>{% endif %}
+<header><a class="marca" href="/">Agentes de Trading</a>
+<nav><a href="/">Analizar</a><a href="/informes">Informes</a><a href="/historial">Historial</a><a href="/backtests">Backtests</a><a href="/ajustes">Ajustes</a></nav></header>
+<main>{% block cuerpo %}{% endblock %}</main>
+<footer>Herramienta de investigación. No es asesoría financiera. No envía órdenes a ningún bróker.
+<form method="post" action="/salir"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="enlace">Salir</button></form></footer></body></html>
