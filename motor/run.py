@@ -196,7 +196,7 @@ def _analizar(tienda, t, carpeta, simulado):
     sin_fuentes = []
 
     def vigilar(*a, **k):
-        sin_fuentes.extend(v for n, v in k.items() if n.endswith("_block") and any(f in str(v) for f in (*FALLO_DATOS, "unavailable")))
+        sin_fuentes.extend(v for n, v in k.items() if n.endswith("_block") and re.match(r"\s*<[^>]*unavailable|\s*(NO_)?DATA_UNAVAILABLE", str(v), re.I))
         return construir(*a, **k)
     with mock.patch.object(sentimiento, "_build_system_message", vigilar):
         for mensajes, estado in grafo.stream_run(inicio, **grafo.propagator.get_graph_args()):

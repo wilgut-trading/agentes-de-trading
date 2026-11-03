@@ -18,7 +18,7 @@ PUBLICAS = {"/login"}
 PREFIJOS_PUBLICOS = ("/static/",)
 CSP = "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 CSP_LOGIN = ("default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; connect-src 'self' https://*.googleapis.com; "
-             "frame-src https://*.firebaseapp.com https://*.web.app https://accounts.google.com; style-src 'self'; img-src 'self' data:; base-uri 'none'")
+             "frame-src https://*.firebaseapp.com https://*.web.app https://accounts.google.com; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
 router = APIRouter()
 
 

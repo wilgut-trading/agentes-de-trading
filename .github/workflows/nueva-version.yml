@@ -50,7 +50,7 @@ jobs:
           git remote add upstream https://github.com/TauricResearch/TradingAgents.git
           git fetch upstream "refs/tags/$NUEVA:refs/tags/$NUEVA"
           # Si la rama ya existe se continua sobre ella, sin forzar: puede tener tus ajustes.
-          if git fetch origin "$RAMA:refs/remotes/origin/$RAMA" 2>/dev/null; then git switch -C "$RAMA" "origin/$RAMA"; else git switch -C "$RAMA"; fi
+          if git rev-parse -q --verify "refs/remotes/origin/$RAMA" >/dev/null; then git switch -C "$RAMA" "origin/$RAMA"; else git switch -C "$RAMA"; fi
           CONFLICTO=false
           git merge --no-edit "$NUEVA" || { CONFLICTO=true; git merge --abort; }
           echo "conflicto=$CONFLICTO" >> "$GITHUB_OUTPUT"
