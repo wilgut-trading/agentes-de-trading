@@ -332,7 +332,7 @@ def test_a7_pasado_nunca_sin_objeciones():
 
 
 def test_a12_fallo_de_datos_incrustado():
-    assert any(f in "rsi 50\n\nDATA_UNAVAILABLE: x" for f in run.FALLO_DATOS)
+    assert run.FALLO_DATOS.search("rsi 50\n\nDATA_UNAVAILABLE: x")
 
 
 def test_a13_calendario_vacio_lanza(monkeypatch):
@@ -735,3 +735,30 @@ r.main()
 def test_r3_web_login_permite_el_script_de_google():
     from web import acceso
     assert "https://apis.google.com" in acceso.CSP_LOGIN
+
+
+# --- regresiones de las rondas 4 y 5 del arbitro ---
+
+@pytest.mark.parametrize("texto", ["DATA_UNAVAILABLE: x", "ventas\n\nNO_DATA_AVAILABLE: No usable", "<stocktwits unavailable: OSError>",
+                                   "<Reddit unavailable: fetch failed (r/x); this is not", "<Yahoo Finance news unavailable for 2026-01-01",
+                                   "Polymarket data is currently unavailable."])
+def test_r5_todas_las_formas_reales_de_fallar_cuentan(texto):
+    assert run.FALLO_DATOS.search(texto)
+
+
+@pytest.mark.parametrize("texto", ["Apple Pay unavailable in Spain after outage", "chart data unavailable lol", "<no Reddit posts found mentioning NVDA>"])
+def test_r5_texto_normal_no_cuenta(texto):
+    assert not run.FALLO_DATOS.search(texto)
+
+
+def test_r5_polymarket_real_coincide():
+    fuente = (Path(ar.__file__).parents[1] / "tradingagents/agents/tools.py").read_text() + "".join(
+        p.read_text() for p in (Path(ar.__file__).parents[1] / "tradingagents/dataflows").rglob("*.py"))
+    assert "data is currently unavailable" in fuente   # si el framework cambia el texto, esto avisa
+
+
+def test_r4_flujo_no_fuerza_ni_sube_version_con_conflicto():
+    flujo = (Path(ar.__file__).parents[1] / ".github/workflows/nueva-version.yml").read_text()
+    assert "--force" not in flujo and 'rev-parse -q --verify "refs/remotes/origin/$RAMA"' in flujo
+    conflicto = flujo[flujo.index('if [ "$CONFLICTO" = true ]; then'):flujo.index("git push")]
+    assert conflicto.index("--allow-empty") < conflicto.index("else") < conflicto.index("VERSION_BASE")

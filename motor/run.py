@@ -30,7 +30,8 @@ ETAPAS = (("market_report", "Analista técnico"), ("sentiment_report", "Analista
           ("news_report", "Analista de noticias"), ("fundamentals_report", "Analista fundamental"),
           ("investment_plan", "Debate e investigación"), ("trader_investment_plan", "Trader"),
           ("final_trade_decision", "Riesgo y gerente de cartera"))
-FALLO_DATOS = ("DATA_UNAVAILABLE:", "NO_DATA_AVAILABLE:", "news unavailable")
+# Como avisan las herramientas y fuentes del framework de que no trajeron datos.
+FALLO_DATOS = re.compile(r"(NO_)?DATA_(UN)?AVAILABLE:|^\s*<[^>\n]*unavailable|data is currently unavailable", re.I | re.M)
 PARAR = "parar"
 LIMITE = "Pausado por límite del plan de ChatGPT. Pulsa Reactivar cuando se renueve."
 SESION_NOMBRE = "chatgpt-auth.json"
@@ -196,7 +197,7 @@ def _analizar(tienda, t, carpeta, simulado):
     sin_fuentes = []
 
     def vigilar(*a, **k):
-        sin_fuentes.extend(v for n, v in k.items() if n.endswith("_block") and re.match(r"\s*<[^>]*unavailable|\s*(NO_)?DATA_UNAVAILABLE", str(v), re.I))
+        sin_fuentes.extend(v for n, v in k.items() if n.endswith("_block") and FALLO_DATOS.search(str(v)))
         return construir(*a, **k)
     with mock.patch.object(sentimiento, "_build_system_message", vigilar):
         for mensajes, estado in grafo.stream_run(inicio, **grafo.propagator.get_graph_args()):
@@ -204,7 +205,7 @@ def _analizar(tienda, t, carpeta, simulado):
                 clave = getattr(m, "id", None) or id(m)
                 if clave not in vistos:
                     vistos.add(clave)
-                    if getattr(m, "type", "") == "tool" and any(f in str(m.content) for f in FALLO_DATOS):
+                    if getattr(m, "type", "") == "tool" and FALLO_DATOS.search(str(m.content)):
                         fallos += 1
             final.update(estado or {})
             ahora_hechas = [n for k, n in ETAPAS if final.get(k)]

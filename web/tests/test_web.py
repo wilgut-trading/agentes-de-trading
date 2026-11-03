@@ -162,3 +162,7 @@ def test_r2_c9_pr_de_un_fork_no_cuenta(monkeypatch):
             return [{"head": {"ref": "actualizacion/v9", "repo": {"full_name": "atacante/fork"}}, "html_url": "x"}]
     monkeypatch.setattr(modulo.requests, "get", lambda *a, **k: R())
     assert modulo._pr_pendiente() is None
+
+
+def test_r4_login_no_se_puede_enmarcar():
+    assert "frame-ancestors 'none'" in acceso.CSP_LOGIN
