@@ -9,7 +9,7 @@ label{display:block;margin:0 0 10px;font-weight:500}input:not([type=checkbox]),s
 .chk{display:inline-flex;gap:6px;align-items:center;margin-right:14px;font-weight:400}fieldset{border:1px solid var(--borde);border-radius:6px;margin:0 0 10px;padding:8px 12px}
 button{font:inherit;padding:8px 14px;border:1px solid var(--borde);border-radius:6px;background:var(--sup);color:var(--tx);cursor:pointer}.primario{width:100%;background:var(--ac);border-color:var(--ac);color:var(--acin);font-weight:600;padding:12px}.enlace{border:0;background:none;color:var(--ac);padding:0;text-decoration:underline}
 .nota{color:var(--tx2);font-size:14px;margin:4px 0 10px}.aviso{background:var(--warns);border-radius:6px;padding:10px;margin:10px 0}.ok{color:var(--pos)}
-.simulado{background:var(--neg);color:#fff;font-weight:700;padding:12px;border-radius:6px;margin-bottom:12px}
+.simulado{background:var(--negs);border:2px solid var(--neg);color:var(--neg);font-weight:700;padding:12px;border-radius:6px;margin-bottom:12px}
 .fila{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--borde);color:var(--tx);text-decoration:none}.fila span{color:var(--tx2);font-size:14px}.fila .v{margin-left:auto;font-weight:600}
 .v-NO,.fila .v-NO{color:var(--neg)}.v-CO,.fila .v-CO{color:var(--warn)}.v-SI,.fila .v-SI{color:var(--pos)}
 .veredicto{background:var(--sup);border:1px solid var(--borde);border-left:6px solid currentColor;border-radius:10px;padding:14px}.veredicto.v-NO{background:var(--negs)}.veredicto.v-CO{background:var(--warns)}.veredicto.v-SI{background:var(--poss)}.rotulo{margin:0;color:var(--tx2);font-size:13px}.rating{font-size:34px;font-weight:800;margin:0 0 8px;color:var(--tx)}.fallo{font-size:22px;font-weight:800;margin:0 0 8px}
