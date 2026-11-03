@@ -36,7 +36,7 @@ plantillas.env.filters["md"] = lambda t: Markup(_md.render(t or ""))
 
 TICKER_RE = re.compile(r"^[A-Z0-9^][A-Z0-9.\-=^]{0,14}$")
 ANALISTAS = {"market": "Técnico", "social": "Sentimiento", "news": "Noticias", "fundamentals": "Fundamental"}
-POR_DEFECTO = os.getenv("AGENTES_ANALISTAS", "market,news,fundamentals").split(",")
+POR_DEFECTO = (os.getenv("AGENTES_ANALISTAS") or "market,news,fundamentals").split(",")
 REPO = "wilgut-trading/agentes-de-trading"
 MAX_CELDAS = 200
 _tienda_abierta = None
@@ -131,7 +131,8 @@ def manifest():
 def inicio(request: Request):
     lista = _propios("analisis")
     pausados = any(t["estado"] == "pausado" for t in lista)
-    varados = not al.candado_vivo(_tienda()) and bool(al.en_cola(_tienda(), al.AMBIENTE))
+    # Tambien lo que quedo "corriendo" sin motor vivo: reactivar lo libera.
+    varados = not al.candado_vivo(_tienda()) and (bool(al.en_cola(_tienda(), al.AMBIENTE)) or any(t["estado"] == "corriendo" for t in lista))
     return _ver(request, "inicio.html", hoy=al.hoy(), analistas=ANALISTAS, por_defecto=POR_DEFECTO, recientes=lista[:8],
                 pausados=pausados, varados=varados)
 
@@ -152,16 +153,18 @@ def analizar(ticker: str = Form(), fecha: str = Form(""), rondas: int = Form(1),
 def reactivar():
     """Vuelve a poner en cola lo pausado por limite y arranca el motor."""
     for t in al.trabajos(_tienda()):
-        if t["ambiente"] == al.AMBIENTE and t["estado"] == "pausado":
-            al.actualizar(_tienda(), t["id"], estado="en_cola", etapa="En cola", avance=0)
-            al._cambiar_cola(_tienda(), lambda ids, i=t["id"]: ids if i in ids else ids + [i])
+        if t["ambiente"] == al.AMBIENTE and t["estado"] == "pausado" \
+                and al.actualizar(_tienda(), t["id"], solo_si=("pausado",), estado="en_cola", etapa="En cola", avance=0):
+            al.asegurar_en_cola(_tienda(), t["id"])
     _lanzar()
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/analisis/{id_}", response_class=HTMLResponse)
 def analisis(request: Request, id_: str):
-    return _ver(request, "analisis.html", t=_trabajo_o_404(id_), candado=al.candado_vivo(_tienda()))
+    t = _trabajo_o_404(id_)
+    dias = (date.fromisoformat(al.hoy()) - date.fromisoformat(t["fecha"])).days if t.get("fecha") else 0
+    return _ver(request, "analisis.html", t=t, dias=dias, candado=al.candado_vivo(_tienda()))
 
 
 @app.get("/analisis/{id_}/avance", response_class=HTMLResponse)
@@ -174,9 +177,9 @@ def avance(request: Request, id_: str):
 
 @app.post("/cancelar/{id_}")
 def cancelar(id_: str):
-    if _trabajo_o_404(id_)["estado"] in ("en_cola", "pausado"):
+    _trabajo_o_404(id_)
+    if al.actualizar(_tienda(), id_, solo_si=("en_cola", "pausado"), estado="fallido", etapa="Cancelado", error="Cancelado por ti antes de empezar."):
         al.sacar_de_cola(_tienda(), id_)
-        al.actualizar(_tienda(), id_, estado="fallido", etapa="Cancelado", error="Cancelado por ti antes de empezar.")
     return RedirectResponse("/", status_code=303)
 
 

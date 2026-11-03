@@ -44,13 +44,22 @@ jobs:
           fi
           echo "$VERSION" | gcloud storage cp - "gs://$BUCKET/respaldos/version.txt"
       - name: Motor y web
+        env:
+          ANALISTAS: ${{ vars.AGENTES_ANALISTAS }}
+          CORREOS: ${{ secrets.AGENTES_CORREOS }}
+          ORIGENES: ${{ vars.AGENTES_ORIGENES }}
+          FB_KEY: ${{ vars.FIREBASE_APIKEY }}
         run: |
-          COMUNES="AGENTES_BUCKET=$BUCKET,AGENTES_AMBIENTE=prod,GOOGLE_CLOUD_PROJECT=$PROYECTO,AGENTES_ANALISTAS=${{ vars.AGENTES_ANALISTAS }}"
-          gcloud run jobs update agentes-motor --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --update-env-vars "$COMUNES"
-          gcloud run deploy agentes-web --region "$REGION" --image "$IMAGEN" --min-instances 0 --allow-unauthenticated --update-env-vars "$COMUNES"
+          # ^;^ cambia el separador: AGENTES_ANALISTAS lleva comas.
+          COMUNES="^;^AGENTES_BUCKET=$BUCKET;AGENTES_AMBIENTE=prod;GOOGLE_CLOUD_PROJECT=$PROYECTO;AGENTES_ANALISTAS=$ANALISTAS;AGENTES_CORREOS=$CORREOS;AGENTES_ORIGENES=$ORIGENES;FIREBASE_APIKEY=$FB_KEY;FIREBASE_AUTHDOMAIN=$PROYECTO.web.app;FIREBASE_PROJECTID=$PROYECTO"
+          gcloud run jobs deploy agentes-motor --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --service-account "agentes-motor@$PROYECTO.iam.gserviceaccount.com" --update-env-vars "$COMUNES"
+          gcloud run deploy agentes-web --region "$REGION" --image "$IMAGEN" --min-instances 0 --allow-unauthenticated --service-account "agentes-web@$PROYECTO.iam.gserviceaccount.com" --update-env-vars "$COMUNES"
+          # Una vista previa fija el trafico: sin esto, lo nuevo se quedaria en 0 %.
+          gcloud run services update-traffic agentes-web --region "$REGION" --to-latest
       - name: Hosting
         run: npx -y firebase-tools@14 deploy --only hosting,storage --project "$PROYECTO" --non-interactive
       - name: Borrar vista previa
         run: |
+          AGENTES_BUCKET="$BUCKET" .venv/bin/python -m motor.run --cerrar-preview
           gcloud run jobs delete agentes-motor-preview --region "$REGION" -q || true
           gcloud run services update-traffic agentes-web --region "$REGION" --remove-tags preview || true

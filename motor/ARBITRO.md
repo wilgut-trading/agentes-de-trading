@@ -45,16 +45,21 @@ Controles deterministas (código, sin modelo):
 | Informes | Falta un analista elegido | Reservas (2 o más: no operar) |
 | Datos | Una herramienta de datos falló durante el análisis | Reservas |
 | Niveles | Entrada o stop lejos del precio, o stop al lado equivocado | No operar |
+| Niveles | Sin stop legible, u objetivo al lado contrario | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos | Reservas |
 | Resultados | Hay presentación de resultados dentro de la ventana de 5 sesiones | Reservas |
-| Historial | Menos de 30 decisiones direccionales liquidadas, o sin ventaja medida | Reservas |
+| Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
+| Fecha | Es una fecha pasada: exploración, sin comprobar resultados | Reservas |
+| Repetición | Otra ejecución de hoy dio otra calificación | Reservas |
+| Historial | Menos de 30 **semanas** con decisiones liquidadas, o sin ventaja medida | Reservas |
 
 Debate adversarial (con el modelo):
 
 1. **Fiscal:** busca lo que invalida la decisión. Cada objeción debe citar textualmente la
    decisión y la evidencia.
 2. **Verificación de citas (código):** se descarta toda objeción cuya cita no aparezca
-   literalmente. Así una objeción inventada no puede tumbar una decisión.
+   literalmente. Así una objeción inventada no puede tumbar una decisión; pero el descarte deja
+   la decisión en reservas, porque tampoco se puede dar por refutada.
 3. **Defensor:** responde cada objeción que sobrevivió, también con citas.
 4. **Árbitro (modelo profundo):** falla cada objeción: sostenida o rechazada, grave o leve.
 

@@ -17,7 +17,8 @@ jobs:
           case "$ETIQUETA" in *[!a-zA-Z0-9._-]*) echo "Etiqueta no válida"; exit 1;; esac
           IMAGEN="us-central1-docker.pkg.dev/$PROYECTO/agentes/agentes:$ETIQUETA"
           gcloud run jobs update agentes-motor --region us-central1 --image "$IMAGEN"
-          gcloud run deploy agentes-web --region us-central1 --image "$IMAGEN"
+          gcloud run deploy agentes-web --region us-central1 --image "$IMAGEN" --update-env-vars AGENTES_AMBIENTE=prod
+          gcloud run services update-traffic agentes-web --region us-central1 --to-latest
       - if: inputs.respaldo != ''
         run: |
           case "$RESPALDO" in *[!a-zA-Z0-9._-]*) echo "Carpeta no válida"; exit 1;; esac

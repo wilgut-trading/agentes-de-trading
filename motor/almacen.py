@@ -92,8 +92,11 @@ class Local:
                  if p.is_file() and not p.name.endswith((".tmp", ".cerrojo")))
         return sorted(c for c in todos if c.startswith(prefijo))
 
-    def borrar(self, clave):
-        self._ruta(clave).unlink(missing_ok=True)
+    def borrar(self, clave, si_version=None):
+        ruta = self._ruta(clave)
+        if si_version is not None and (not ruta.exists() or ruta.stat().st_mtime_ns != si_version):
+            raise Conflicto(clave)
+        ruta.unlink(missing_ok=True)
 
 
 class Bucket:
@@ -102,9 +105,18 @@ class Bucket:
         self.bucket = storage.Client().bucket(nombre)
 
     def leer(self, clave):
-        blob = self.bucket.get_blob(clave)
-        return None if blob is None else (blob.download_as_bytes(if_generation_match=blob.generation),
-                                          blob.generation)
+        from google.api_core.exceptions import NotFound, PreconditionFailed
+        for _ in range(5):
+            blob = self.bucket.get_blob(clave)
+            if blob is None:
+                return None
+            try:
+                return blob.download_as_bytes(if_generation_match=blob.generation), blob.generation
+            except NotFound:
+                return None
+            except PreconditionFailed:   # cambio entre las dos llamadas: se lee otra vez
+                continue
+        raise Conflicto(clave)
 
     def escribir(self, clave, datos: bytes, si_version=None):
         from google.api_core.exceptions import PreconditionFailed
@@ -118,12 +130,14 @@ class Bucket:
     def listar(self, prefijo):
         return sorted(b.name for b in self.bucket.list_blobs(prefix=prefijo))
 
-    def borrar(self, clave):
-        from google.api_core.exceptions import NotFound
+    def borrar(self, clave, si_version=None):
+        from google.api_core.exceptions import NotFound, PreconditionFailed
         try:
-            self.bucket.blob(clave).delete()
+            self.bucket.blob(clave).delete(if_generation_match=si_version)
         except NotFound:
             pass
+        except PreconditionFailed:
+            raise Conflicto(clave) from None
 
 
 def abrir():
@@ -174,17 +188,27 @@ def _cambiar_cola(almacen, cambio):
     raise Conflicto(COLA)
 
 
-def encolar(almacen, trabajo: dict, id_fijo=None) -> dict:
+def encolar(almacen, datos: dict, id_fijo=None) -> dict:
     """Agrega un trabajo. Con `id_fijo`, repetirlo no lo duplica (corrida diaria)."""
     marca = datetime.now(LIMA).strftime("%Y%m%d-%H%M%S")
     id_ = id_fijo or f"{marca}-{uuid.uuid4().hex[:8]}"
     if not ID_RE.match(id_):
         raise ValueError("id de trabajo invalido")
-    valor = {**trabajo, "id": id_, "ambiente": trabajo.get("ambiente", AMBIENTE), "estado": "en_cola",
+    valor = {**datos, "id": id_, "ambiente": datos.get("ambiente", AMBIENTE), "estado": "en_cola",
              "creado": ahora(), "etapa": "En cola", "avance": 0}
-    guardar_json(almacen, _ruta_run(id_), valor, si_version=0)
-    _cambiar_cola(almacen, lambda ids: ids + [id_])
+    try:
+        guardar_json(almacen, _ruta_run(id_), valor, si_version=0)
+    except Conflicto:
+        # Una caida entre las dos escrituras no debe dejarlo varado: repetirlo lo completa.
+        valor = trabajo(almacen, id_)
+        if valor["estado"] != "en_cola":
+            raise
+    asegurar_en_cola(almacen, id_)
     return valor
+
+
+def asegurar_en_cola(almacen, id_):
+    _cambiar_cola(almacen, lambda ids: ids if id_ in ids else ids + [id_])
 
 
 def sacar_de_cola(almacen, id_):
@@ -206,11 +230,13 @@ def trabajos(almacen) -> list[dict]:
     return sorted((t for t in hallados if t), key=lambda t: t["creado"], reverse=True)
 
 
-def actualizar(almacen, id_, **campos) -> dict:
-    """Cambia un trabajo sin pisar otro cambio simultaneo."""
+def actualizar(almacen, id_, solo_si=None, **campos) -> dict | None:
+    """Cambia un trabajo sin pisar otro cambio simultaneo. Con `solo_si`, solo desde esos estados."""
     for _ in range(8):
         hallado = almacen.leer(_ruta_run(id_))
         valor = json.loads(hallado[0])
+        if solo_si and valor["estado"] not in solo_si:
+            return None
         valor.update(campos)
         try:
             guardar_json(almacen, _ruta_run(id_), valor, si_version=hallado[1])
@@ -239,13 +265,19 @@ def tomar_candado(almacen, dueno: str) -> bool:
         guardar_json(almacen, CANDADO, {"dueno": dueno, "vence": vence}, si_version=hallado[1])
         return True
     except Conflicto:
-        return False
+        # Un reintento de la libreria tras una respuesta perdida tambien da conflicto, aunque
+        # la escritura fuera nuestra: lo que decide es quien figura como dueno.
+        actual = leer_json(almacen, CANDADO)
+        return bool(actual) and actual["dueno"] == dueno
 
 
 def soltar_candado(almacen, dueno: str):
-    actual = leer_json(almacen, CANDADO)
-    if actual and actual["dueno"] == dueno:
-        almacen.borrar(CANDADO)
+    hallado = almacen.leer(CANDADO)
+    if hallado and json.loads(hallado[0])["dueno"] == dueno:
+        try:
+            almacen.borrar(CANDADO, si_version=hallado[1])
+        except Conflicto:
+            pass   # otro motor ya lo tomo: el candado es suyo
 
 
 def lanzar_motor(ambiente=None):

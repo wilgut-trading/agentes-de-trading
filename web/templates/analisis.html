@@ -1,13 +1,14 @@
 {% extends "base.html" %}{% block titulo %}{{ t.ticker }} · Agentes de Trading{% endblock %}{% block cuerpo %}
-<h1>{{ t.ticker }} <small>{{ t.fecha }}</small></h1>
+<h1>{{ t.ticker }} <small>{{ t.fecha }}{% if t.simbolo and t.simbolo != t.ticker %} · analizado como {{ t.simbolo }}{% endif %}</small></h1>
 {% if t.estado == 'fallido' %}<div class="aviso"><b>{{ t.etapa }}.</b> {{ t.error }}</div>
 {% elif t.estado == 'pausado' %}<form method="post" action="/reactivar" class="aviso"><input type="hidden" name="csrf" value="{{ csrf }}">{{ t.etapa }} <button>Reactivar</button></form>
 {% elif t.estado != 'terminado' %}{% include "_avance.html" %}{% if t.estado == 'en_cola' %}<form method="post" action="/cancelar/{{ t.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Cancelar</button></form>{% endif %}
 {% else %}{% set a = t.arbitro %}
+{% if dias > 0 and t.estado == 'terminado' %}<div class="aviso"><b>Decisión de hace {{ dias }} día(s).</b> Los precios ya cambiaron: no la uses como si fuera de hoy.</div>{% endif %}
 {% if t.simulado %}<div class="simulado">SIMULADO. Esto es una prueba sin modelo real. No lo uses para decidir nada.</div>{% endif %}
 <section class="veredicto v-{{ a.veredicto[:2] }}"><p class="rotulo">TradingAgents dice</p><p class="rating">{{ t.rating }}</p>
 <p class="rotulo">El árbitro dice</p><p class="fallo">{{ a.veredicto }}</p>
-{% if a.referencia %}<p class="nota">Último cierre independiente: {{ '%.2f'|format(a.referencia.cierre) }} ({{ a.referencia.fecha }}).</p>{% endif %}
+{% if a.referencia %}<p class="nota">Último precio independiente: {{ '%.2f'|format(a.referencia.cierre) }} ({{ a.referencia.fecha }}).</p>{% endif %}
 {% if a.veredicto == 'SIN OBJECIONES' %}<p class="nota">No encontró defectos. Eso no significa que la operación vaya a ganar.</p>{% endif %}
 {% if not t.vivo and not t.simulado %}<p class="nota">Fecha pasada: exploración, no cuenta en el historial.</p>{% endif %}
 <p class="nota">{{ 'Tuvo en cuenta tu cartera.' if t.con_cartera else 'No tuvo en cuenta ninguna cartera.' }} TradingAgents {{ t.version }}.</p></section>
