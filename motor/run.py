@@ -183,7 +183,8 @@ def _liquidar_el_otro(grafo, objetivo, valores):
 def _analizar(tienda, t, carpeta, simulado):
     from datetime import date
 
-    from motor import arbitro
+    from motor import arbitro, base_historica
+    from motor.consumo import Consumo
     from tradingagents.agents.analysts import sentiment_analyst as sentimiento
     from tradingagents.agents.rating import run_rating
     from tradingagents.dataflows.symbols import crypto_base, normalize_symbol
@@ -209,7 +210,8 @@ def _analizar(tienda, t, carpeta, simulado):
         # asi que no mediria lo mismo que una decision en vivo.
         config["memory_log_path"] = str(carpeta.casa / "exploracion" / f"{id_}.md")
 
-    grafo = TradingAgentsGraph(t["analistas"], config=config)
+    consumo = Consumo()
+    grafo = TradingAgentsGraph(t["analistas"], config=config, callbacks=[consumo])
     with ob.con_mandato(objetivo, valores["rr_minimo"]):
         inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
     final, fallos, vistos, hechas, caidas = {}, 0, set(), [], []
@@ -249,30 +251,55 @@ def _analizar(tienda, t, carpeta, simulado):
                   "detalle": f"Hoy ya salió {previa['rating']} para {ticker}. El historial mide esa, no esta: el desacuerdo es una señal de duda."}]
     juicio = arbitro.arbitrar(final, ticker, fecha, rating, t["analistas"], grafo.quick_thinking_llm,
                               grafo.deep_thinking_llm, medicion, fallos, vivo, extra=extra,
-                              objetivo_analisis=objetivo, rr_minimo=valores["rr_minimo"], fuentes_caidas=caidas)
+                              objetivo_analisis=objetivo, rr_minimo=valores["rr_minimo"], fuentes_caidas=caidas,
+                              visto=_precio_visto(config, ticker, fecha), contrastar="market" in t["analistas"] and not simulado)
+    if objetivo == "swing" and not simulado:
+        juicio["base_historica"] = base_historica.de_plan(juicio["plan"], ticker, fecha, arbitro.sesiones_de(juicio["plan"]["horizonte"]) or valores["sesiones_swing"], juicio["sin_cierre"])
     ruta = Path(grafo.save_reports(final, ticker, Path(config["results_dir"]) / "reports" / id_))
     tienda.escribir(f"{al.prefijo(t['ambiente'])}informes/{id_}.html", ruta.with_name("complete_report.html").read_bytes())
     al.actualizar(tienda, id_, estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(), rating=rating,
                   veredicto=juicio["veredicto"], arbitro=juicio, decision=final["final_trade_decision"],
-                  simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), objetivo=objetivo, version=grafo.run_settings()["version"])
+                  simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), objetivo=objetivo, version=grafo.run_settings()["version"], consumo=consumo.resumen())
     if vivo:   # despues de guardar el informe: un fallo aqui no debe costar el analisis
         _liquidar_el_otro(grafo, objetivo, valores)
 
 
+def _precio_visto(config, ticker, fecha) -> tuple | None:
+    """La ultima fila hasta esa fecha de los precios que recibieron los agentes."""
+    import pandas as pd
+    from tradingagents.dataflows.symbols import normalize_symbol, safe_ticker_component
+    ruta = Path(config["data_cache_dir"]) / f"{safe_ticker_component(normalize_symbol(ticker))}-YFin-data.csv"
+    try:
+        filas = pd.read_csv(ruta, usecols=["Date", "Close"]).dropna()
+        filas["Date"] = filas["Date"].astype(str).str[:10]
+        ultima = filas[filas["Date"] <= fecha].iloc[-1]
+        return ultima["Date"], float(ultima["Close"])
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+
+
 def _backtest(tienda, t, carpeta):
+    from motor.consumo import Consumo
+    from tradingagents import backtest as modulo
     from tradingagents.backtest import iter_grid, run_backtest, summarize
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
     from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError
     objetivo = t.get("objetivo", "inversion")
     # Los plazos con que se lanzo: si cambian a mitad de una reanudacion, las ventanas se mezclarian.
     valores = {**ob.ajustes(tienda, t["ambiente"]), **t.get("ajustes", {})}
     celdas = [(ti, f) for ti in t["tickers"] for f in iter_grid(t["desde"], t["hasta"], t["cada"])]
     fallos, r = [], None
+    consumo = Consumo(t.get("consumo"))
+
+    def con_contador(analistas, config):   # run_backtest arma su propio grafo
+        return TradingAgentsGraph(analistas, config=config, callbacks=[consumo])
     # De una en una: run_backtest se traga los errores de cada celda, y con un limite o una
     # sesion caida seguir con las demas solo gastaria intentos. Reanudar salta lo ya hecho.
     for i, (ticker, fecha) in enumerate(celdas):
         al.actualizar(tienda, t["id"], etapa=f"Análisis {i + 1} de {len(celdas)}: {ticker} {fecha}", avance=round(100 * i / len(celdas)))
-        with ob.con_mandato(objetivo, valores["rr_minimo"]):
+        with ob.con_mandato(objetivo, valores["rr_minimo"]), mock.patch.object(modulo, "TradingAgentsGraph", con_contador):
             r = run_backtest([ticker], [fecha], _config(objetivo, valores), selected_analysts=t["analistas"], run_id=t["id"])
+        al.actualizar(tienda, t["id"], consumo=consumo.resumen())
         for _, _, error in r.failures:
             if _es_limite(error):
                 raise RuntimeError("rate limit: " + error[:200])

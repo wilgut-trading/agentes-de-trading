@@ -1416,3 +1416,135 @@ def test_f3_cripto_y_futuros_no_tienen_cierre_que_afirmar(ticker):
     fiscal = Grabadora(ar.Fiscal(objeciones=[]))
     ar.debate(fiscal, Modelo(), _estado(), ticker, "2026-11-03", "Hold", ["market"], {"cierre": 100, "fecha": "2026-11-03"})
     assert "E1: Último precio independiente: 100" in fiscal.vistos[0]
+
+
+# --- consumo, base historica y precios que vieron los agentes ----------------------------
+
+def _tabla(cierres, rango=0.01, apertura=None):
+    import pandas as pd
+    return pd.DataFrame({"Open": apertura if apertura is not None else cierres, "High": [c * (1 + rango) for c in cierres],
+                         "Low": [c * (1 - rango) for c in cierres], "Close": cierres})
+
+
+def test_g1_consumo_cuenta_llamadas_y_suma_sobre_lo_previo():
+    from langchain_core.messages import HumanMessage
+    from motor.consumo import Consumo
+    from motor.simulado import Falso
+    c = Consumo({"llamadas": 5, "herramientas": 1, "por_modelo": {"modelo": 5}})
+    Falso(callbacks=[c]).invoke([HumanMessage(content="hola")])
+    r = c.resumen()
+    assert r["llamadas"] == 6 and r["herramientas"] == 1 and sum(r["por_modelo"].values()) == 6
+
+
+def test_g2_base_con_tendencia_alcista_llega_al_objetivo():
+    from motor.base_historica import calcular
+    b = calcular(_tabla([100 * 1.01 ** (i % 400 / 10) for i in range(600)]), 100, 99, 100.5, 10)
+    assert b and b["lado"] == 1 and b["objetivo"] > b["stop"] and abs(b["objetivo"] + b["stop"] + b["ninguno"] - 1) < 1e-9
+
+
+def test_g3_base_corta_es_simetrica():
+    from motor.base_historica import calcular
+    subiendo = [100 * 1.002 ** i for i in range(600)]
+    largo = calcular(_tabla(subiendo, 0.001), 100, 99, 101.5, 10)
+    corto = calcular(_tabla(subiendo, 0.001), 100, 101, 98.5, 10)
+    assert largo["objetivo"] > 0.9 and corto["stop"] > 0.9 and corto["lado"] == -1 and corto["resultado_medio"] < 0 < largo["resultado_medio"]
+
+
+def test_g4_base_paga_el_hueco_de_apertura_entero():
+    from motor.base_historica import calcular
+    cierres = [100.0] * 600
+    aperturas = list(cierres)
+    for i in range(50, 600, 50):   # cada 50 sesiones abre 10 % abajo y vuelve
+        aperturas[i] = 90.0
+    tabla = _tabla(cierres, 0.002, aperturas)
+    tabla.loc[list(range(50, 600, 50)), "Low"] = 90.0
+    b = calcular(tabla, 100, 98, 105, 10)
+    assert b["stop"] > 0 and b["resultado_medio"] < -3 * b["stop"]   # el stop en 98 no protegio del salto a 90
+
+
+def test_g5_base_no_mira_el_futuro_ni_usa_la_barra_abierta():
+    from motor.base_historica import calcular
+    cierres = [100.0 + (i % 7) * 0.2 for i in range(600)]
+    base = calcular(_tabla(cierres, 0.003), 100, 99, 102.5, 10)
+    con_barra = calcular(_tabla(cierres + [500.0], 0.003), 100, 99, 102.5, 10, sin_cierre=True)
+    assert base == con_barra
+
+
+@pytest.mark.parametrize("args", [(100, 100, 110), (100, 110, 120), (0, 90, 110), (100, 90, 90)])
+def test_g6_base_no_calcula_geometria_invalida(args):
+    from motor.base_historica import calcular
+    assert calcular(_tabla([100.0] * 600), *args, 10) is None
+
+
+def test_g7_base_exige_historia_suficiente_y_no_rompe_el_analisis(monkeypatch):
+    from motor import base_historica as bh
+    assert bh.calcular(_tabla([100.0] * 100), 100, 98, 105, 10) is None
+    plan = {"direccion": 1, "stop": 98, "objetivo": 105, "base": 100}
+    monkeypatch.setattr(bh, "_tabla", lambda *a: 1 / 0)
+    assert bh.de_plan(plan, "NVDA", "2026-11-03", 10) is None
+    assert bh.de_plan({**plan, "direccion": None}, "NVDA", "2026-11-03", 10) is None
+
+
+def test_g8_base_con_la_fecha_del_analisis_no_ve_lo_posterior(monkeypatch):
+    from motor import base_historica as bh
+    vistos = {}
+
+    class T:
+        def __init__(self, *_):
+            pass
+
+        def history(self, **k):
+            vistos.update(k)
+            return _tabla([100.0] * 600)
+    import yfinance as yf
+    monkeypatch.setattr(yf, "Ticker", T)
+    bh.de_plan({"direccion": 1, "stop": 98, "objetivo": 105, "base": 100}, "NVDA", "2026-07-06", 10)
+    assert vistos["end"] == "2026-07-07"
+
+
+CIEN = {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}
+
+
+@pytest.mark.parametrize("visto,decision,esperado", [
+    (("2026-11-03", 100.2), "El cierre aportado de 100.20 supera la media.", set()),
+    (("2026-11-03", 106.0), "x", {("Datos", ar.NO_OPERAR)}),
+    (("2026-11-02", 100.0), "x", {("Datos", ar.NO_OPERAR)}),
+    (None, "x", {("Datos", ar.RESERVAS)}),
+    (("2026-11-03", 100.0), "El cierre aportado de 105.54 supera la media.", {("Datos", ar.RESERVAS)}),
+    (("2026-11-03", 100.0), "El último cierre fue 100,39.", set()),
+    (("2026-11-03", 100.0), "Latest close: 1,266.90 today", {("Datos", ar.RESERVAS)}),
+])
+def test_g9_contraste_de_precios(visto, decision, esperado):
+    c = []
+    ar.contrastar_precios(c, CIEN, visto, decision, False)
+    assert {(x["control"], x["resultado"]) for x in c} == esperado
+
+
+def test_g10_con_mercado_abierto_citar_el_cierre_de_ayer_es_correcto():
+    c = []
+    ar.contrastar_precios(c, CIEN, ("2026-11-03", 100.0), "El último cierre fue 95.00", True)
+    assert not c
+
+
+def test_g11_fecha_pasada_no_se_contrasta_porque_los_ajustados_difieren():
+    j = ar.arbitrar(_estado(), "NVDA", "2026-11-03", "Buy", ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=False,
+                    precio=lambda *a: {**REF, "fecha": "2026-11-03"}, eventos=lambda *a: None, reloj=_noche(), visto=("2026-11-03", 50.0), contrastar=True)
+    assert not [c for c in j["controles"] if c["control"] == "Datos"]
+
+
+def test_g12_el_precio_equivocado_de_los_agentes_tumba_la_decision():
+    """El caso real: GOOGL a 295,54 cuando el precio independiente era 288,92."""
+    j = ar.arbitrar(_estado(), "GOOGL", "2026-11-03", "Buy", ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
+                    precio=lambda *a: {"cierre": 288.92, "fecha": "2026-11-03", "rango_medio": 7.0}, eventos=lambda *a: None, reloj=_noche(),
+                    visto=("2026-11-03", 295.54), contrastar=True, objetivo_analisis="inversion")
+    assert j["veredicto"] == ar.NO_OPERAR
+
+
+def test_g13_precio_visto_lee_los_datos_de_los_agentes(tmp_path):
+    (tmp_path / "NFLX-YFin-data.csv").write_text("Date,Open,High,Low,Close,Volume\n2026-11-03,1,1,1,63.42,1\n2026-11-04 00:00:00-05:00,1,1,1,66.39,1\n")
+    config = {"data_cache_dir": str(tmp_path)}
+    assert run._precio_visto(config, "NFLX", "2026-11-04") == ("2026-11-04", 66.39)
+    assert run._precio_visto(config, "NFLX", "2026-11-03") == ("2026-11-03", 63.42)
+    assert run._precio_visto(config, "GOOGL", "2026-11-04") is None
+    (tmp_path / "AMD-YFin-data.csv").write_text("basura")
+    assert run._precio_visto(config, "AMD", "2026-11-04") is None

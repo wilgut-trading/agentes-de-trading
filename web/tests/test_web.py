@@ -242,3 +242,15 @@ def test_h_hold_sin_operacion_lo_dice(dentro, tienda):
 def test_h_hold_con_invalidez_muestra_la_tabla(dentro, tienda):
     pagina = _plan_pagina(dentro, tienda, {"entrada": None, "stop": None, "objetivo": None, "rr": None, "rr_precio": None, "horizonte": "10 sessions", "invalidez": "close below 64.02"})
     assert "Sin operación" not in pagina and "close below 64.02" in pagina
+
+
+def test_g_base_historica_y_consumo_se_ven(dentro, tienda):
+    id_ = _analisis(dentro).headers["location"].rsplit("/", 1)[1]
+    base = {"ventanas": 1230, "independientes": 123, "sesiones": 10, "lado": 1, "objetivo": 0.137, "stop": 0.496, "ninguno": 0.367, "bajo": 0.08, "alto": 0.21,
+            "relacion": 2.5, "minimo": 0.286, "resueltas": 0.217, "resultado_medio": -0.19}
+    al.actualizar(tienda, id_, estado="terminado", rating="Hold", veredicto="CON RESERVAS", vivo=True, version="x", decision="d", objetivo="swing",
+                  consumo={"llamadas": 24, "herramientas": 9, "entrada": 1000, "salida": 200, "por_modelo": {}},
+                  arbitro={"veredicto": "CON RESERVAS", "controles": [], "referencia": {}, "objetivo": "swing", "plan": PLAN, "base_historica": base, "debate": {"objeciones": []}})
+    pagina = dentro.get(f"/analisis/{id_}").text
+    assert "Base histórica de este plan" in pagina and "14 %" in pagina and "No es la probabilidad de esta operación" in pagina and "-0.19 R" in pagina
+    assert "24 llamadas al modelo" in pagina and "1,200 tokens" in pagina

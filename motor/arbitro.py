@@ -328,6 +328,39 @@ def _sin_cierre(ticker, fecha, referencia, vivo, reloj=None) -> bool:
     return bool(vivo and referencia and not crypto_base(ticker) and fecha == ny.strftime("%Y-%m-%d") and ny.hour < 16 and referencia["fecha"] == fecha)
 
 
+# Lo que la decision presenta como el precio de hoy. Otros cierres citados pueden ser historicos.
+_PRECIO_CITADO = re.compile(r"(?:cierre aportado|cierre de referencia|[uú]ltimo cierre|latest close|last close|current price|precio actual)\D{0,30}?([0-9][0-9.,]*[0-9]|[0-9])", re.I)
+
+
+def _a_numero(texto: str) -> float | None:
+    if re.fullmatch(r"[0-9]+,[0-9]{1,2}", texto):   # 66,39
+        texto = texto.replace(",", ".")
+    texto = texto.replace(",", "")
+    return float(texto) if _NUMERO.fullmatch(texto) else None
+
+
+def contrastar_precios(controles, referencia, visto, decision, sin_cierre) -> None:
+    """Los agentes pueden trabajar con un precio equivocado sin que nada falle. `visto` es la
+    ultima fila de los datos que recibieron: (fecha, cierre), o None si no se pudo leer."""
+    if not referencia:
+        return
+    cierre = referencia["cierre"]
+    tolerancia = max(cierre * 0.01, 0.5 * referencia["rango_medio"])
+    if visto is None:
+        _reservas(controles, "Datos", RESERVAS, "No se pudo comprobar qué precios recibieron los agentes.")
+    elif visto[0] != referencia["fecha"]:
+        _reservas(controles, "Datos", NO_OPERAR, f"Los agentes trabajaron con precios hasta {visto[0]}, y el último es de {referencia['fecha']}.")
+    elif abs(visto[1] - cierre) > tolerancia:
+        _reservas(controles, "Datos", NO_OPERAR, f"Los agentes recibieron {_p(visto[1])} como último precio, y el independiente es {_p(cierre)}.")
+    if sin_cierre:   # con el mercado abierto, citar el cierre de ayer es correcto
+        return
+    for texto in _PRECIO_CITADO.findall(decision or ""):
+        citado = _a_numero(texto)
+        if citado is not None and abs(citado - cierre) > tolerancia:
+            _reservas(controles, "Datos", RESERVAS, f"La decisión cita {_p(citado)} como último precio, y el independiente es {_p(cierre)}.")
+            break
+
+
 def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
                             fallos_datos, medicion, vivo=True, reloj=None, fecha_mercado=None, objetivo_analisis="swing",
                             rr_minimo=2.5, fuentes_caidas=()) -> list[dict]:
@@ -551,7 +584,7 @@ def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, r
 
 def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo, medicion,
              fallos_datos=0, vivo=True, precio=None, eventos=None, reloj=None, extra=(),
-             objetivo_analisis="swing", rr_minimo=2.5, fuentes_caidas=()) -> dict:
+             objetivo_analisis="swing", rr_minimo=2.5, fuentes_caidas=(), visto=None, contrastar=False) -> dict:
     precio, eventos = precio or precio_referencia, eventos or proximos_resultados
     try:
         referencia = precio(ticker, fecha)
@@ -571,6 +604,8 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
             _reservas(extra, "Frescura", RESERVAS, "No se pudo comprobar la última sesión del mercado.")
     controles = controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
                                         fallos_datos, medicion, vivo, reloj, fecha_mercado, objetivo_analisis, rr_minimo, fuentes_caidas) + extra
+    if contrastar and vivo:   # en fechas pasadas los precios ajustados no se comparan con los de entonces
+        contrastar_precios(controles, referencia, visto, estado.get("final_trade_decision"), _sin_cierre(ticker, fecha, referencia, vivo, reloj))
     try:
         adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis,
                              _sin_cierre(ticker, fecha, referencia, vivo, reloj))
@@ -583,5 +618,5 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
         if o["sostenida"]:
             _reservas(controles, "Debate", NO_OPERAR if o["gravedad"] == "grave" else RESERVAS, o["objecion"])
     veredicto = max((c["resultado"] for c in controles), key=_ORDEN.get, default=SIN_OBJECIONES)
-    return {"veredicto": veredicto, "controles": controles, "referencia": referencia, "plan": plan_de(estado, referencia, rr_minimo, rating, objetivo_analisis == "swing"), "objetivo": objetivo_analisis,
+    return {"veredicto": veredicto, "controles": controles, "referencia": referencia, "sin_cierre": _sin_cierre(ticker, fecha, referencia, vivo, reloj), "plan": plan_de(estado, referencia, rr_minimo, rating, objetivo_analisis == "swing"), "objetivo": objetivo_analisis,
             "debate": adversarial, "medicion": medicion}
