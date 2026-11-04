@@ -256,9 +256,14 @@ def _real(stop=95.0, razon="Razón."):
     return render_trader_proposal(TraderProposal(action="Buy", reasoning=razon, entry_price=100.0, stop_loss=stop))
 
 
-@pytest.mark.parametrize("plan", ["Stop Loss: 110", "**Stop Loss:** 110", "**Stop Loss**: ~110", "Stop Loss: USD 110", "**Stop de pérdidas**: 110"])
+@pytest.mark.parametrize("plan", ["Stop Loss: 110", "**Stop Loss:** 110", "**Stop de pérdidas**: 110"])
 def test_a1_stop_en_texto_libre(plan):
     assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan="**Action**: Buy\n" + plan))
+
+
+@pytest.mark.parametrize("plan", ["**Stop Loss**: ~110", "Stop Loss: USD 110", "Stop Loss: 95 a 98", "Stop Loss: 95,20", "Stop Loss: $100"])
+def test_nivel_que_no_se_entiende_no_se_adivina(plan):
+    assert ("Niveles", ar.RESERVAS) in _controles(_estado(trader_investment_plan="**Action**: Buy\n**Entry Price**: 100\n" + plan))
 
 
 @pytest.mark.parametrize("plan", ["**Action:** Sell", "**Action**: **SELL**", "**Acción**: Vender", "x\nFINAL TRANSACTION PROPOSAL: **SELL**"])
@@ -577,8 +582,10 @@ def test_r2_a5_nadie_respalda_la_direccion():
 def test_r2_a6_a9_lectura_de_niveles():
     assert ar._nivel("**Entry**: 900", "entrada") == 900
     assert ar._nivel("**Target Price**: 60", "objetivo") == 60
-    assert ar._nivel("**Stop**: 95,20", "stop") == 95.2
-    assert ar._nivel("**Stop**: 1,234.50", "stop") == 1234.5
+    assert ar._nivel("**Stop**: 95,20", "stop") is None
+    assert ar._nivel("**Stop**: 1,234.50", "stop") is None
+    assert ar._nivel("**Entry Price**: 98 a 102", "entrada") is None
+    assert ar._nivel("**Stop**: 1e400", "stop") is None
     assert ar._nivel("**Stop Loss**: 5% below", "stop") is None
     assert ar._nivel("**Entry Price**: 1.2e-05", "entrada") == 1.2e-05
 
@@ -768,9 +775,10 @@ def test_r4_flujo_no_fuerza_ni_sube_version_con_conflicto():
 
 # --- los dos objetivos ---
 
-@pytest.mark.parametrize("texto,tope", [("10 sessions", 10), ("5-15 sesiones", 15), ("3 weeks", 15), ("3 a 4 semanas", 20), ("20 días", 20), ("3-6 months", 126), ("not provided", None), (None, None),
-                                         ("10 sessions then review in 6 months", 126), ("1 week to 3 months", 63), ("5 days, 2 years", 504), ("15 sessions, hold indefinitely", None),
-                                         ("0 sessions", None), ("10 trading sessions", 10), ("10-15 trading days", 15), ("2 quarters", 126)])
+@pytest.mark.parametrize("texto,tope", [("10 sessions", 10), ("5-15 sesiones", 15), ("1 sesión", 1), ("10 trading sessions", 10), ("10 sesiones.", 10), ("**25 sessions**", 25),
+                                         ("3 weeks", None), ("3-6 months", None), ("not provided", None), (None, None), ("1 semestre", None), ("at least 10 sessions", None),
+                                         ("10 sesiones o más", None), ("10 sessions, extendable", None), ("10 sessions then review in 6 months", None),
+                                         ("15 sessions, hold indefinitely", None), ("0 sessions", None), ("15-5 sessions", None), ("9" * 5000 + " sessions", None)])
 def test_plazo_en_sesiones(texto, tope):
     assert ar.sesiones_de(texto) == tope
 
@@ -895,7 +903,10 @@ def test_o1_rr_con_entrada_lejana_del_precio_real():
 
 
 def test_o1_precio_ya_rebaso_el_stop():
-    assert ("Niveles", ar.NO_OPERAR) in _swing_precio(cierre=100.0, entrada=105, stop=101, objetivo_precio=115)
+    # Ruptura: la entrada aun no se activa, asi que no es "ya rebaso".
+    pendiente = _swing_precio(cierre=100.0, entrada=102, stop=100.5, objetivo_precio=107)
+    assert ("Niveles", ar.RESERVAS) in pendiente and ("Niveles", ar.NO_OPERAR) not in pendiente
+    assert ("Niveles", ar.NO_OPERAR) in _swing_precio(cierre=100.0, entrada=99, stop=100.5, objetivo_precio=90)
 
 
 @pytest.mark.parametrize("kw", [{"objetivo_precio": 1000}, {"objetivo_precio": 0}, {"stop": 99.9, "objetivo_precio": 110}])
@@ -907,7 +918,9 @@ def test_o1_plan_exige_entrada_e_invalidez():
     assert ("Plan", ar.RESERVAS) in _swing_precio(entrada=None)
     assert ("Plan", ar.RESERVAS) in _swing_precio(invalidez="Momentum looks good.")
     assert ar.invalidez_de("texto. Invalidación: cierre bajo 90 en dos sesiones. fin").startswith("cierre bajo 90")
-    assert ar.invalidez_de("Invalidation: N/A") is None
+    for mala in ("Invalidation: N/A", "Invalidación: por definir", "Invalidación: no aplica aquí 100", "No hay condición de invalidación: el precio decide", "Invalidation:\n**Price Target**: 115.0"):
+        assert ar.invalidez_de(mala) is None, mala
+    assert ar.invalidez_de("La tesis cae. **Invalidación:** cierre bajo 94,5.") == "cierre bajo 94,5"
     assert _swing_precio() == set()
 
 
@@ -945,3 +958,47 @@ def test_o1_datos_nombra_la_fuente():
     estado = _estado()
     c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", "Buy", ["market", "news"], REF, None, 2, MEDIDO, True, _noche(), None, "swing", 2.5, ["get_macro_indicators"])
     assert any("get_macro_indicators" in x["detalle"] for x in c)
+
+
+# --- regresiones de la segunda ronda de objetivos ---
+
+def test_o2_alcance_depende_del_plazo():
+    assert ("Plan", ar.NO_OPERAR) in _swing_precio(cierre=60.0, entrada=60, stop=59.2, objetivo_precio=74, rango=0.8, horizonte="1 session")
+    assert ("Plan", ar.NO_OPERAR) not in _swing_precio(cierre=60.0, entrada=60, stop=59, objetivo_precio=67, rango=0.8, horizonte="10 sessions")
+
+
+def test_o2_rango_de_entrada_no_inventa_relacion():
+    c = _swing_precio(entrada="98 a 102", stop=95, objetivo_precio=110)
+    assert ("Niveles", ar.RESERVAS) in c and ("Plan", ar.RESERVAS) in c
+
+
+def test_o2_minimo_exacto_no_falla_por_decimales():
+    assert ar._relacion(52.74, 51.16, 56.69) == 2.5
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) not in _swing_precio(cierre=52.74, entrada=52.74, stop=51.16, objetivo_precio=56.69, rango=0.8)
+
+
+def test_o2_trader_que_no_opera_y_precio_cercano():
+    estado = _estado(trader_investment_plan="**Action**: Hold\n**Entry Price**: 100\n**Stop Loss**: 95")
+    assert ("Plan", ar.RESERVAS) in _controles(estado)
+    assert ("Riesgo/beneficio", ar.RESERVAS) in _swing_precio(entrada=98, stop=96, objetivo_precio=103)
+
+
+def test_o2_precios_pequenos_legibles():
+    assert ar._p(0.00001234) == "1.234e-05" and ar._p(1.0834) == "1.0834" and ar._p(1234.5) == "1,234.50"
+
+
+def test_o2_decision_real_limpia_llega_a_sin_objeciones():
+    from tradingagents.agents.schemas import (
+        PortfolioDecision,
+        TraderProposal,
+        render_pm_decision,
+        render_trader_proposal,
+    )
+    for rating, accion, entrada, stop, objetivo in (("Buy", "Buy", 100.0, 95.0, 115.0), ("Overweight", "Buy", 100.0, 95.0, 115.0), ("Sell", "Sell", 100.0, 105.0, 85.0), ("Underweight", "Sell", 100.0, 105.0, 85.0)):
+        estado = _estado(
+            investment_plan=f"**Recommendation**: {rating}",
+            trader_investment_plan=render_trader_proposal(TraderProposal(action=accion, reasoning="Razón.", entry_price=entrada, stop_loss=stop)),
+            final_trade_decision=render_pm_decision(PortfolioDecision(rating=rating, executive_summary="Plan.", investment_thesis="Tesis clara. Invalidación: cierre más allá de 96.", price_target=objetivo, time_horizon="10 sesiones")))
+        j = ar.arbitrar(estado, "NVDA", "2026-11-03", rating, ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
+                        precio=lambda *a: {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}, eventos=lambda *a: None, reloj=_noche(), objetivo_analisis="swing", rr_minimo=2.5)
+        assert j["veredicto"] == ar.SIN_OBJECIONES, (rating, j["controles"])

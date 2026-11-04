@@ -71,15 +71,27 @@ def _ultimo(patron: str, texto: str):
     return hallados[-1] if hallados else None
 
 
+_NUMERO = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+
+
 def _nivel(texto: str, cual: str) -> float | None:
-    valor = _ultimo(ETIQUETAS[cual], texto)
-    m = re.match(r"[~\u2248\s]*(?:USD|US\$|\$)?\s*(-?)\s*\$?(\d[\d,]*(?:\.\d+)?(?:e-?\d+)?)\s*(%?)", valor or "", re.I)
-    if not m or m.group(3):   # "5 %" no es un precio
+    """Solo un numero limpio, como lo escribe el framework. Un rango, "$100" o "95,20" no cuentan:
+    adivinar cual de los numeros es el precio podria inventar una relacion riesgo/beneficio."""
+    valor = (_ultimo(ETIQUETAS[cual], texto) or "").strip(" *_")
+    if not _NUMERO.fullmatch(valor):
         return None
-    numero = m.group(2)
-    # 95,20 es decimal; 1,234 o 1,234,567 son miles.
-    numero = numero.replace(",", ".") if re.fullmatch(r"\d+,\d{1,2}", numero) else numero.replace(",", "")
-    return float(m.group(1) + numero)
+    numero = float(valor)
+    return numero if math.isfinite(numero) else None
+
+
+def _ilegible(texto: str, cual: str) -> bool:
+    valor = (_ultimo(ETIQUETAS[cual], texto) or "").strip(" *_")
+    return bool(valor) and valor.lower() != "not provided" and _nivel(texto, cual) is None
+
+
+def _p(precio) -> str:
+    """Con los decimales que hagan falta: 0.00 no dice nada de una criptomoneda barata."""
+    return f"{precio:,.2f}" if abs(precio) >= 100 else f"{precio:,.6g}"
 
 
 def _palabra(valor) -> str:
@@ -147,7 +159,7 @@ def historial(entradas: list[dict], sesiones: int = 5) -> dict:
 def _relacion(base, stop, objetivo):
     if None in (base, stop, objetivo) or base == stop or (objetivo - base) * (base - stop) <= 0:
         return None
-    return abs(objetivo - base) / abs(base - stop)
+    return round(abs(objetivo - base) / abs(base - stop), 9)   # 2,5 exacto no debe fallar por decimales binarios
 
 
 def plan_de(estado, referencia) -> dict:
@@ -163,63 +175,66 @@ def plan_de(estado, referencia) -> dict:
             "invalidez": invalidez_de(decision)}
 
 
+_INVALIDEZ = re.compile(r"(?:^|[.!?;:]\**[ \t]+)[>*_#\- \t]*(?:Invalidation|Invalidaci[oó]n)[ \t*_]*[:=\u2013\u2014][ \t*_]*([^\n]+)", re.I | re.M)
+_SIN_CONDICION = re.compile(r"(?:^|\W)(?:no|not|none|n/?a|ningun\w*|sin|tbd|por definir|to be|pendiente)(?:\W|$)", re.I)
+_PLAZO = re.compile(r"([0-9]{1,3})(?:\s*(?:-|\u2013|a|to)\s*([0-9]{1,3}))?\s+(?:trading\s+)?(?:sessions?|sesi[oó]n(?:es)?)", re.I)
+
+
 def invalidez_de(texto) -> str | None:
-    """La condicion que invalida la operacion. Se comprueba que este; que sea cierta, no se puede."""
-    m = re.search(r"(?:Invalidation|Invalidaci[oó]n)\**\s*[:=\u2013\u2014-]+\**\s*([^\n]+)", texto or "", re.I)
-    valor = m.group(1).strip(" .*") if m else ""
-    return valor if len(valor) >= 8 and valor.lower() not in ("not provided", "no especificada", "no especificado") else None
-
-
-_UNIDADES = (("ses", 1), ("d", 1), ("sem", 5), ("week", 5), ("mes", 21), ("month", 21), ("trim", 63), ("quarter", 63), ("a", 252), ("year", 252))
-_PLAZO = re.compile(r"(\d+)(?:\s*(?:-|a|to|al|\u2013)\s*(\d+))?\s*(?:trading\s+|market\s+|de\s+mercado\s+)?(ses|d[ií]a|day|sem|week|mes|month|trim|quarter|a[ñn]o|year)", re.I)
-_ABIERTO = re.compile(r"indefin|open.ended|sin\s+(plazo|l[ií]mite)|as long as|mientras\s", re.I)
+    """La linea rotulada de invalidez, con un nivel concreto. Se comprueba que este; que sea cierta, no."""
+    m = _INVALIDEZ.search(texto or "")
+    valor = re.split(r"[.;](?:\s|$)", m.group(1).strip(" *_"))[0].strip() if m else ""
+    return valor if len(valor) >= 8 and re.search(r"\d", valor) and not _SIN_CONDICION.search(valor) else None
 
 
 def sesiones_de(horizonte) -> int | None:
-    """El mayor plazo que menciona, en sesiones. None si no se entiende o si queda abierto."""
-    if not horizonte or _ABIERTO.search(horizonte):
+    """Solo la forma que pide el mandato, `10 sessions` o `5-15 sesiones`: el tope, o None."""
+    m = _PLAZO.fullmatch((horizonte or "").strip(" .*_"))
+    if not m:
         return None
-    topes = []
-    for uno, dos, unidad in _PLAZO.findall(horizonte):
-        unidad = unidad.lower()
-        factor = next(f for prefijo, f in sorted(_UNIDADES, key=lambda u: -len(u[0])) if unidad.startswith(prefijo))
-        topes.append(int(dos or uno) * factor)
-    return max(topes) if topes and min(topes) > 0 else None
+    uno, dos = int(m.group(1)), int(m.group(2) or m.group(1))
+    return dos if 1 <= uno <= dos else None
 
 
-def _controles_swing(c, plan, rr_minimo, referencia, sentido):
-    objetivo, stop, base = plan["objetivo"], plan["stop"], plan["base"]
+def _controles_swing(c, plan, rr_minimo, referencia, sentido, trader):
+    objetivo, stop, base, entrada = plan["objetivo"], plan["stop"], plan["base"], plan["entrada"]
     cierre, rango = (referencia or {}).get("cierre"), (referencia or {}).get("rango_medio") or 0
-    if plan["entrada"] is None:
+    if trader == 0:
+        _reservas(c, "Plan", RESERVAS, "El trader propuso no operar: estos niveles no son una operación suya.")
+    if entrada is None:
         _reservas(c, "Plan", RESERVAS, "Falta la entrada: la relación riesgo/beneficio se calculó desde el último precio.")
     if plan["invalidez"] is None:
-        _reservas(c, "Plan", RESERVAS, "Falta la condición que invalida la operación.")
+        _reservas(c, "Plan", RESERVAS, "Falta la condición que invalida la operación, con un nivel concreto.")
     if objetivo is None:
         _reservas(c, "Plan", RESERVAS, "Falta el objetivo de precio: sin él no se puede medir riesgo/beneficio.")
     elif objetivo <= 0:
-        _reservas(c, "Plan", NO_OPERAR, f"El objetivo ({objetivo:,.2f}) no es un precio válido.")
+        _reservas(c, "Plan", NO_OPERAR, f"El objetivo ({_p(objetivo)}) no es un precio válido.")
     tope = sesiones_de(plan["horizonte"])
     if tope is None:
-        _reservas(c, "Plan", RESERVAS, "Falta un plazo cerrado en sesiones.")
+        _reservas(c, "Plan", RESERVAS, "Falta un plazo en sesiones, como `10 sesiones`.")
     elif tope > 20:
         _reservas(c, "Plan", RESERVAS, f"El plazo ({plan['horizonte']}) supera las 20 sesiones de un swing.")
     if cierre is not None and objetivo is not None and objetivo > 0:
         # Sin esto, un objetivo inalcanzable bastaria para cumplir cualquier minimo.
-        alcance = max(cierre * 0.25, rango * min(tope or 20, 20))
+        alcance = rango * min(tope or 20, 20) if rango else cierre * 0.25
         if abs(objetivo - cierre) > alcance:
-            _reservas(c, "Plan", NO_OPERAR, f"El objetivo ({objetivo:,.2f}) está fuera de lo alcanzable en el plazo desde {cierre:,.2f}.")
+            _reservas(c, "Plan", NO_OPERAR, f"El objetivo ({_p(objetivo)}) está fuera de lo alcanzable en el plazo desde {_p(cierre)}.")
     if stop is not None and base is not None and rango and abs(base - stop) < 0.5 * rango:
-        _reservas(c, "Plan", NO_OPERAR, f"El stop ({stop:,.2f}) está dentro del ruido normal de un día ({rango:,.2f}).")
+        _reservas(c, "Plan", NO_OPERAR, f"El stop ({_p(stop)}) está dentro del ruido normal de un día ({_p(rango)}).")
     if stop is not None and cierre is not None and (stop - cierre) * sentido >= 0:
-        _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El último precio ({cierre:,.2f}) ya rebasó el stop ({stop:,.2f}).")
+        if entrada is not None and (entrada - cierre) * sentido > 0:
+            # Una ruptura: la entrada aun no se activa, asi que el stop todavia no cuenta.
+            _reservas(c, "Niveles", RESERVAS, f"Entrada pendiente en {_p(entrada)}: el último precio ({_p(cierre)}) aún no la activa.")
+        else:
+            _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El último precio ({_p(cierre)}) ya rebasó el stop ({_p(stop)}).")
     if plan["rr"] is not None and plan["rr"] < rr_minimo:
         _reservas(c, "Riesgo/beneficio", NO_OPERAR, f"La relación es {plan['rr']:.2f}, por debajo de tu mínimo de {rr_minimo:g}.")
     elif plan["rr"] is None and objetivo is not None and stop is not None:
         _reservas(c, "Riesgo/beneficio", RESERVAS, "Con esos niveles no se puede calcular la relación riesgo/beneficio.")
-    if plan["entrada"] is not None and cierre is not None and abs(plan["entrada"] - cierre) > rango \
-            and plan["rr"] is not None and plan["rr"] >= rr_minimo and (plan["rr_precio"] is None or plan["rr_precio"] < rr_minimo):
+    if entrada is not None and cierre is not None and plan["rr"] is not None and plan["rr"] >= rr_minimo \
+            and (plan["rr_precio"] is None or plan["rr_precio"] < rr_minimo):
         hoy = f"{plan['rr_precio']:.2f}" if plan["rr_precio"] is not None else "no calculable"
-        _reservas(c, "Riesgo/beneficio", RESERVAS, f"{plan['rr']:.2f} solo si entras a {plan['entrada']:,.2f}; al último precio es {hoy}. Exige una orden limitada.")
+        _reservas(c, "Riesgo/beneficio", RESERVAS, f"{plan['rr']:.2f} solo si entras a {_p(entrada)}; al último precio es {hoy}. Exige una orden limitada.")
 
 
 def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
@@ -257,6 +272,9 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
 
     sentido = SENTIDO.get(rating, 0)
     plan = estado.get("trader_investment_plan") or ""
+    for texto, cual, nombre in ((plan, "entrada", "la entrada"), (plan, "stop", "el stop"), (estado.get("final_trade_decision"), "objetivo", "el objetivo")):
+        if _ilegible(texto, cual):
+            _reservas(c, "Niveles", RESERVAS, f"No se pudo leer {nombre} como un precio: {_ultimo(ETIQUETAS[cual], texto).strip(' *_')[:60]}")
     entrada, stop = _nivel(plan, "entrada"), _nivel(plan, "stop")
     objetivo = _nivel(estado.get("final_trade_decision"), "objetivo")
     if referencia:
@@ -264,20 +282,20 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
         for nombre, nivel in (("entrada", entrada), ("stop", stop)):
             if nivel is not None and abs(nivel - referencia["cierre"]) > margen:
                 _reservas(c, "Niveles", NO_OPERAR,
-                          f"El {nombre} ({nivel:,.2f}) está lejos del último precio ({referencia['cierre']:,.2f}).")
+                          f"El {nombre} ({_p(nivel)}) está lejos del último precio ({_p(referencia['cierre'])}).")
         if objetivo is not None and sentido and (objetivo - referencia["cierre"]) * sentido <= 0:
-            _reservas(c, "Niveles", RESERVAS, f"El objetivo ({objetivo:,.2f}) está del lado contrario a la decisión.")
+            _reservas(c, "Niveles", RESERVAS, f"El objetivo ({_p(objetivo)}) está del lado contrario a la decisión.")
     base = entrada if entrada is not None else (referencia or {}).get("cierre")
     if stop is not None and stop <= 0:
-        _reservas(c, "Niveles", NO_OPERAR, f"El stop ({stop:,.2f}) no es un precio válido.")
+        _reservas(c, "Niveles", NO_OPERAR, f"El stop ({_p(stop)}) no es un precio válido.")
     elif stop is not None and base is not None and sentido and (stop - base) * sentido >= 0:
         # Vender puede ser reducir una posicion larga, cuyo stop de proteccion va por debajo.
-        _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El stop ({stop:,.2f}) está del lado equivocado de {base:,.2f}"
+        _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El stop ({_p(stop)}) está del lado equivocado de {_p(base)}"
                   + ("." if sentido > 0 else ": solo es válido si reduces una posición larga, no si abres un corto."))
     elif stop is None and sentido and objetivo_analisis == "swing":
         _reservas(c, "Niveles", RESERVAS, "No se pudo leer un stop: define tú la salida antes de operar.")
     if objetivo_analisis == "swing" and sentido:
-        _controles_swing(c, plan_de(estado, referencia), rr_minimo, referencia, sentido)
+        _controles_swing(c, plan_de(estado, referencia), rr_minimo, referencia, sentido, _accion(plan))
 
     investigacion, trader = _rating_en(estado.get("investment_plan")), _accion(plan)
     for nombre, otro in (("gerente de investigación", investigacion), ("trader", trader)):

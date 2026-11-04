@@ -46,6 +46,7 @@ Controles deterministas (código, sin modelo):
 | Datos | Una herramienta de datos falló durante el análisis | Reservas |
 | Niveles | Entrada o stop lejos del precio, o stop al lado equivocado en Buy u Overweight | No operar |
 | Niveles | Sin stop legible, u objetivo al lado contrario. En Underweight o Sell, stop por debajo del precio: vale si reduces una posición larga, no si abres un corto | Reservas |
+| Lectura | Solo cuenta lo escrito en la forma exacta: precios como número limpio, plazo como `10 sesiones`, invalidez con un nivel. Lo demás no se adivina | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
 | Resultados | Hay presentación de resultados dentro de la operación (swing: 28 días; inversión: 10 días) | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
@@ -54,7 +55,9 @@ Controles deterministas (código, sin modelo):
 | Historial | Menos de 30 **periodos independientes** medidos al plazo vigente, o sin ventaja medida | Reservas |
 | Plan (solo swing) | Falta entrada, objetivo, condición de invalidez o plazo cerrado en sesiones, o el plazo supera 20 sesiones | Reservas |
 | Plan (solo swing) | Objetivo no válido o fuera de lo alcanzable en el plazo, o stop dentro del ruido de un día | No operar |
-| Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell |
+| Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell o si la entrada aún no se activa |
+| Niveles | Un nivel escrito de forma que no se puede leer como precio | Reservas |
+| Plan (solo swing) | El trader propuso no operar | Reservas |
 | Riesgo/beneficio (solo swing) | Menor que tu mínimo (2,5 por defecto, se cambia en Ajustes) | No operar |
 | Riesgo/beneficio (solo swing) | Con esos niveles no se puede calcular, o solo cumple con una entrada lejana del último precio | Reservas |
 

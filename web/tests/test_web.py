@@ -191,3 +191,8 @@ def test_o1_analisis_antiguo_no_se_etiqueta_como_inversion(dentro, tienda):
     assert "Anterior a objetivos" in dentro.get(f"/analisis/{id_}").text
     assert id_ not in dentro.get("/informes?objetivo=swing").text
     assert dentro.post("/ajustes/analisis", data={"diario": "swing", "sesiones_swing": "x", "sesiones_inversion": "63", "rr_minimo": "2.5", "csrf": _csrf(dentro)}).text == "Escribe solo números."
+
+
+def test_o2_backtest_terminado_conserva_su_objetivo():
+    assert modulo._etiqueta({"tipo": "backtest", "estado": "terminado", "objetivo": "swing"}) == "Swing trading"
+    assert modulo._etiqueta({"tipo": "analisis", "estado": "terminado", "arbitro": {}}) == "Anterior a objetivos"

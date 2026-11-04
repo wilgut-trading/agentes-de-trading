@@ -78,11 +78,13 @@ def _analistas(valores: list[str]) -> list[str]:
 
 def _etiqueta(t) -> str:
     """Lo que el motor aplico de verdad: un analisis anterior a los objetivos no fue de ninguno."""
-    aplicado = (t.get("arbitro") or {}).get("objetivo") if t.get("estado") == "terminado" else t.get("objetivo")
+    # Un backtest no pasa por el arbitro: su objetivo es el que se le pidio.
+    aplicado = (t.get("arbitro") or {}).get("objetivo") if t.get("estado") == "terminado" and t.get("tipo") != "backtest" else t.get("objetivo")
     return ob.OBJETIVOS.get(aplicado, "Anterior a objetivos")
 
 
 plantillas.env.globals["etiqueta"] = _etiqueta
+plantillas.env.filters["precio"] = lambda n: "—" if n is None else arbitro._p(n)
 
 
 def _objetivo(valor: str) -> str:
