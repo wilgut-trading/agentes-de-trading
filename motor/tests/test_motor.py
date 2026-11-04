@@ -1,11 +1,12 @@
 import json
 import os
 import threading
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-from motor import almacen as al, arbitro as ar, run
+from motor import almacen as al, arbitro as ar, objetivos as ob, run
 
 MEDIDO = {"n": 100, "aciertos": 70, "tasa": .7, "bajo": .6, "alto": .8, "alfa_medio": 2.0, "ventaja": True}
 LARGO = "x" * 300
@@ -55,9 +56,13 @@ def test_incoherencia_e_informes():
 
 
 def test_citas_inventadas_no_cuentan():
-    o = ar.Objecion(afirmacion="el margen subió mucho", evidencia="esto nunca se dijo en ninguna parte", objecion="x")
-    buena = ar.Objecion(afirmacion="el margen subió mucho", evidencia="los **ingresos** cayeron 10 %", objecion="y")
-    assert ar.citas_validas([o, buena], "Dice que el margen subió mucho.", "Los ingresos\ncayeron 10 % este año") == [buena]
+    decision, evidencia = ["Dice que el margen subió mucho."], ["Los ingresos", "cayeron 10 % este año"]
+    inventadas = [ar.Objecion(linea_decision=1, linea_evidencia=3, objecion="x"), ar.Objecion(linea_decision=2, linea_evidencia=1, objecion="x"),
+                  ar.Objecion(linea_decision=0, linea_evidencia=1, objecion="x"), ar.Objecion(linea_decision=1, linea_evidencia=-1, objecion="x")]
+    assert ar.citas_validas(inventadas, decision, evidencia) == []
+    buena = ar.Objecion(linea_decision=1, linea_evidencia=2, objecion="y")
+    sin_cita = ar.Objecion(linea_decision=1, objecion="z")
+    assert ar.citas_validas([buena, sin_cita], decision, evidencia) == [(buena, decision[0], evidencia[1]), (sin_cita, decision[0], None)]
 
 
 def test_historial_y_wilson():
@@ -300,7 +305,7 @@ class Modelo:
 
 
 def test_a4_descartadas_no_son_aprobacion():
-    falsa = ar.Objecion(afirmacion="esto no aparece en la decisión", evidencia="tampoco aparece en la evidencia", objecion="x")
+    falsa = ar.Objecion(linea_decision=999, linea_evidencia=999, objecion="x")
     j = ar.arbitrar(_estado(), "NVDA", "2026-11-03", "Buy", ["market", "news"], Modelo(ar.Fiscal(objeciones=[falsa])), Modelo(), MEDIDO,
                     vivo=True, precio=lambda *a: {**REF, "fecha": "2026-11-03"}, eventos=lambda *a: None, reloj=_noche())
     assert j["veredicto"] == ar.RESERVAS
@@ -568,7 +573,7 @@ def test_r2_a2_frescura_no_se_salta():
 
 
 def test_r2_a4_fallo_duplicado_no_borra_el_grave():
-    o = ar.Objecion(afirmacion="el margen subió mucho", evidencia="los ingresos cayeron 10 %", objecion="x")
+    o = ar.Objecion(linea_decision=1, linea_evidencia=1, objecion="x")
     r = ar.debate(Modelo(ar.Fiscal(objeciones=[o]), ar.Defensor()), Modelo(ar.Sentencia(fallos=[
         ar.Fallo(numero=1, sostenida=True, gravedad="grave", razon="a"), ar.Fallo(numero=1, sostenida=False, gravedad="leve", razon="b")])),
         {"final_trade_decision": "Dice que el margen subió mucho.", "market_report": "Los ingresos cayeron 10 % este año"}, "NVDA", "2026-11-03", "Buy", ["market"], {})
@@ -596,7 +601,7 @@ def test_r2_a8_calendario_solo_con_fechas_viejas(monkeypatch):
     import yfinance as yf
 
     class T:
-        calendar = {"Earnings Date": [date(2026, 10, 1)]}
+        calendar = {"Earnings Date": [date(2026, 7, 1)]}
 
         def __init__(self, *_):
             pass
@@ -1008,3 +1013,156 @@ def test_o3_condiciones_y_plazos_normales_se_aceptan():
     assert ar.invalidez_de("Invalidación: si cierra por debajo de 94 sin recuperar") is not None
     assert ar.invalidez_de("Invalidación: ningún cierre en 20 sesiones") is None
     assert ar.sesiones_de("`10 sessions`") == 10
+
+
+class Grabadora(Modelo):
+    def __init__(self, *respuestas):
+        super().__init__(*respuestas)
+        self.vistos = []
+
+    def invoke(self, texto):
+        self.vistos.append(texto)
+        return super().invoke(texto)
+
+
+def test_d1_el_debate_cita_por_numero_y_llega_al_fallo():
+    """En la nube las 5 objeciones de cada analisis se descartaban y el debate nunca juzgaba nada."""
+    o = ar.Objecion(linea_decision=2, linea_evidencia=2, objecion="No cuadra.")
+    fiscal = Grabadora(ar.Fiscal(objeciones=[o]), ar.Defensor())
+    r = ar.debate(fiscal, Modelo(ar.Sentencia(fallos=[ar.Fallo(numero=1, sostenida=True, gravedad="grave", razon="a")])),
+                  {"final_trade_decision": "**Rating**: Buy\n\n**Tesis**: el margen sube", "market_report": "| Mes | Margen |\n\n| Oct | 12 % |"},
+                  "NVDA", "2026-11-03", "Buy", ["market"], {"cierre": 100, "fecha": "2026-11-03"})
+    assert r["descartadas"] == 0
+    assert r["objeciones"][0]["afirmacion"] == "**Tesis**: el margen sube" and r["objeciones"][0]["evidencia"] == "| Mes | Margen |"
+    assert "D2: **Tesis**: el margen sube" in fiscal.vistos[0] and "E1: Último cierre independiente: 100" in fiscal.vistos[0]
+    assert "| Mes | Margen |" in fiscal.vistos[1]
+
+
+def test_d2_sin_respaldo_no_tumba_la_decision():
+    o = ar.Objecion(linea_decision=1, objecion="Nada lo respalda.")
+    sentencia = ar.Sentencia(fallos=[ar.Fallo(numero=1, sostenida=True, gravedad="grave", razon="a")])
+    j = ar.arbitrar(_estado(), "NVDA", "2026-11-03", "Buy", ["market", "news"], Modelo(ar.Fiscal(objeciones=[o]), ar.Defensor()), Modelo(sentencia), MEDIDO,
+                    vivo=True, precio=lambda *a: {**REF, "fecha": "2026-11-03"}, eventos=lambda *a: None, reloj=_noche())
+    assert j["debate"]["objeciones"][0]["evidencia"] is None and j["debate"]["descartadas"] == 0
+    assert j["veredicto"] == ar.RESERVAS
+
+
+def test_d3_mas_de_cinco_no_cuentan_como_descartadas():
+    muchas = [ar.Objecion(linea_decision=1, linea_evidencia=1, objecion=str(i)) for i in range(7)]
+    r = ar.debate(Modelo(ar.Fiscal(objeciones=muchas), ar.Defensor()), Modelo(ar.Sentencia()), _estado(), "NVDA", "2026-11-03", "Buy", ["market"], {})
+    assert r["descartadas"] == 0 and len(r["objeciones"]) == 5
+
+
+def _hold(tesis, objetivo="74.1", accion="Hold", entrada="not provided", stop="not provided"):
+    return _estado(investment_plan="**Recommendation**: Hold",
+                   trader_investment_plan=f"**Action**: {accion}\n\n**Entry Price**: {entrada}\n\n**Stop Loss**: {stop}\n\n**Position Sizing**: 25 %",
+                   final_trade_decision=f"**Rating**: Hold\n\n**Executive Summary**: Sin operar.\n\n**Investment Thesis**: {tesis}\n\n**Price Target**: {objetivo}\n\n**Time Horizon**: 10 sessions")
+
+
+def _swing_hold(estado, ref=None, rating="Hold", rr=2.5):
+    ref = ref or {"cierre": 66.07, "fecha": "2026-11-03", "rango_medio": 1.9}
+    c = ar.controles_deterministas(estado, "NFLX", "2026-11-03", rating, ["market", "news"], ref, None, 0, MEDIDO, True, _noche(), objetivo_analisis="swing", rr_minimo=rr)
+    return {(x["control"], x["resultado"]) for x in c}, ar.plan_de(estado, ref, rr, rating)
+
+
+CONDICIONAL = "Esperar.\nEntry: 66.90\nStop: 64.02\nInvalidation: close below 64.02"
+
+
+def test_h1_hold_con_plan_condicional_se_revisa_y_se_rotula():
+    controles, plan = _swing_hold(_hold(CONDICIONAL))
+    assert plan["condicional"] and plan["direccion"] == 1 and plan["pendiente"]
+    assert (plan["entrada"], plan["stop"], plan["objetivo"], plan["rr"]) == (66.9, 64.02, 74.1, 2.5)
+    assert plan["entrada_limite"] == 66.9
+    assert controles == {("Plan condicional", ar.RESERVAS)}
+
+
+def test_h2_plan_condicional_sin_el_minimo_es_no_operar():
+    controles, plan = _swing_hold(_hold(CONDICIONAL, objetivo="72"))
+    assert plan["condicional"] and ("Riesgo/beneficio", ar.NO_OPERAR) in controles
+
+
+def test_h3_plan_condicional_inalcanzable_o_con_stop_en_ruido():
+    assert ("Plan", ar.NO_OPERAR) in _swing_hold(_hold(CONDICIONAL, objetivo="140"))[0]
+    assert ("Plan", ar.NO_OPERAR) in _swing_hold(_hold("Entry: 66.90\nStop: 66.50\nInvalidation: close below 66.50"))[0]
+
+
+def test_h4_plan_condicional_corto():
+    controles, plan = _swing_hold(_hold("Entry: 66\nStop: 68\nInvalidation: close above 68", objetivo="60"))
+    assert plan["condicional"] and plan["direccion"] == -1 and plan["entrada_limite"] == round((60 + 2.5 * 68) / 3.5, 9)
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) not in controles
+
+
+def test_h5_niveles_sueltos_o_incoherentes_no_son_un_plan():
+    # Como el NFLX real: objetivo e invalidez legibles, entrada y stop solo en la prosa.
+    controles, plan = _swing_hold(_hold("Esperar.\nInvalidation: close below 64.02"))
+    assert not plan["condicional"] and ("Plan", ar.RESERVAS) in controles
+    controles, plan = _swing_hold(_hold("Entry: 66.90\nStop: 75\nInvalidation: close above 75"))   # stop y objetivo del mismo lado
+    assert not plan["condicional"] and ("Plan", ar.RESERVAS) in controles
+
+
+def test_h6_hold_sin_operacion_no_tiene_nada_que_revisar():
+    estado = _hold("No hay operación que cumpla el mínimo.", objetivo="not provided")
+    controles, plan = _swing_hold(estado)
+    assert controles == set() and not plan["condicional"] and plan["entrada_limite"] is None
+
+
+def test_h7_en_inversion_el_hold_no_se_revisa_como_swing():
+    c = ar.controles_deterministas(_hold(CONDICIONAL), "NFLX", "2026-11-03", "Hold", ["market", "news"], {"cierre": 66.07, "fecha": "2026-11-03", "rango_medio": 1.9},
+                                   None, 0, MEDIDO, True, _noche(), objetivo_analisis="inversion")
+    assert not [x for x in c if x["control"].startswith("Plan")]
+
+
+def test_h8_los_niveles_del_gerente_mandan_sobre_los_del_trader():
+    estado = _hold(CONDICIONAL, accion="Buy", entrada="60", stop="55")
+    _, plan = _swing_hold(estado)
+    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02)
+    _, plan = _swing_hold(_hold("Esperar.", accion="Buy", entrada="66.9", stop="64.02"))
+    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02)   # sin los suyos, valen los del trader
+
+
+def test_h9_niveles_en_una_sola_frase_y_formas_dudosas():
+    _, plan = _swing_hold(_hold("Esperar a 66.90. Entry: 66.90. Stop: 64.02. Invalidation: close below 64.02."))
+    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02) and plan["condicional"] and plan["invalidez"]
+    controles, plan = _swing_hold(_hold("Esperar.\nEntry: 66,90\nStop: entre 64 y 65"))
+    assert plan["entrada"] is None and plan["stop"] is None and ("Niveles", ar.RESERVAS) in controles and not plan["condicional"]
+    # La prosa no cuenta como nivel: adivinar podria inventar una relacion.
+    assert _swing_hold(_hold("Entrada condicional en 66.90 con stop en 64.02."))[1]["entrada"] is None
+
+
+def test_h10_buy_con_niveles_del_gerente_usa_esos_en_los_controles():
+    estado = _estado(final_trade_decision="**Rating**: Buy\n\n**Investment Thesis**: Entry: 100\nStop: 99.9\nInvalidation: close below 99.9\n\n**Price Target**: 120\n\n**Time Horizon**: 10 sessions")
+    assert ("Plan", ar.NO_OPERAR) in _swing_hold(estado, {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}, "Buy")[0]
+
+
+def test_h11_el_mandato_pide_los_niveles_tambien_en_hold():
+    m = ob.mandato("swing", 2.5)
+    assert "`Entry: <price>`" in m and "`Stop: <price>`" in m and "Hold" in m
+
+
+@pytest.mark.parametrize("fechas,hoy,dias,esperado", [
+    ([date(2026, 10, 28)], "2026-11-04", 28, None),      # GOOGL: acaba de presentar, sin fecha nueva
+    ([date(2026, 10, 28)], "2026-11-04", 10, None),
+    ([date(2026, 12, 9)], "2026-11-04", 28, None),       # futura, fuera de la ventana
+    ([date(2026, 11, 20)], "2026-11-04", 28, "2026-11-20"),
+])
+def test_r1_resultados_con_fecha_reciente(monkeypatch, fechas, hoy, dias, esperado):
+    _calendario(monkeypatch, fechas)
+    assert ar.proximos_resultados("GOOGL", hoy, dias) == esperado
+
+
+@pytest.mark.parametrize("fechas", [[date(2026, 9, 1)], [date(2026, 7, 28)], []])
+def test_r2_resultados_viejos_siguen_sin_saberse(monkeypatch, fechas):
+    _calendario(monkeypatch, fechas)
+    with pytest.raises(LookupError):
+        ar.proximos_resultados("GOOGL", "2026-11-04", 28)
+
+
+def _calendario(monkeypatch, fechas):
+    import yfinance as yf
+
+    class T:
+        calendar = {"Earnings Date": fechas}
+
+        def __init__(self, *_):
+            pass
+    monkeypatch.setattr(yf, "Ticker", T)

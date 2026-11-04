@@ -196,3 +196,39 @@ def test_o1_analisis_antiguo_no_se_etiqueta_como_inversion(dentro, tienda):
 def test_o2_backtest_terminado_conserva_su_objetivo():
     assert modulo._etiqueta({"tipo": "backtest", "estado": "terminado", "objetivo": "swing"}) == "Swing trading"
     assert modulo._etiqueta({"tipo": "analisis", "estado": "terminado", "arbitro": {}}) == "Anterior a objetivos"
+
+
+def _plan_pagina(dentro, tienda, plan, debate=None):
+    id_ = _analisis(dentro).headers["location"].rsplit("/", 1)[1]
+    al.actualizar(tienda, id_, estado="terminado", rating="Hold", veredicto="CON RESERVAS", vivo=True, version="x", decision="d", objetivo="swing",
+                  arbitro={"veredicto": "CON RESERVAS", "controles": [], "referencia": {}, "objetivo": "swing", "plan": plan, "debate": debate or {"objeciones": []}})
+    return dentro.get(f"/analisis/{id_}").text
+
+
+PLAN = {"entrada": 66.9, "stop": 64.02, "objetivo": 74.1, "base": 66.9, "rr": 2.5, "rr_precio": 3.92, "horizonte": "10 sessions", "invalidez": "close below 64.02",
+        "direccion": 1, "rr_minimo": 2.5, "condicional": True, "pendiente": True, "entrada_limite": 66.9}
+
+
+def test_h_plan_condicional_se_rotula_y_no_aparenta_otra_relacion(dentro, tienda):
+    pagina = _plan_pagina(dentro, tienda, PLAN)
+    assert "Plan condicional: comprar solo si se activa" in pagina and "no compres por encima de 66.9" in pagina
+    assert "3.92" not in pagina   # hoy no se puede entrar a ese precio: no es una relacion disponible
+    corto = {**PLAN, "direccion": -1, "entrada_limite": 60.0}
+    assert "Plan condicional: vender solo si se activa" in (p := _plan_pagina(dentro, tienda, corto)) and "no vendas por debajo de 60" in p
+
+
+def test_h_sin_el_minimo_no_sugiere_entrada_limite(dentro, tienda):
+    assert "no compres" not in _plan_pagina(dentro, tienda, {**PLAN, "rr": 1.5, "condicional": False, "pendiente": False})
+
+
+def test_h_analisis_guardado_antes_del_cambio_se_sigue_viendo(dentro, tienda):
+    viejo = {k: PLAN[k] for k in ("entrada", "stop", "objetivo", "base", "rr", "rr_precio", "horizonte", "invalidez")}
+    pagina = _plan_pagina(dentro, tienda, {**viejo, "entrada": None, "stop": None, "rr": None, "rr_precio": None})
+    assert "<h2>Plan</h2>" in pagina and "no compres" not in pagina
+    pagina = _plan_pagina(dentro, tienda, viejo, {"objeciones": [{"objecion": "o", "afirmacion": "a", "evidencia": "cita vieja", "sostenida": True, "gravedad": "leve", "razon": "r"}]})
+    assert "cita vieja" in pagina and "3.92" in pagina
+
+
+def test_d_objecion_sin_respaldo_se_dice_asi(dentro, tienda):
+    pagina = _plan_pagina(dentro, tienda, PLAN, {"objeciones": [{"objecion": "o", "afirmacion": "a", "evidencia": None, "sostenida": True, "gravedad": "leve", "razon": "r"}]})
+    assert "no tiene respaldo en la evidencia" in pagina and "«None»" not in pagina
