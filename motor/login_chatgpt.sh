@@ -8,6 +8,9 @@ touch .env
 mkdir -p data
 TRADINGAGENTS_DATA_DIR=./data docker compose run --rm tradingagents login chatgpt
 [ -s data/chatgpt-auth.json ] || { echo "ERROR: no se creo la sesion."; exit 1; }
+echo "Modelos que ofrece tu plan:"
+TRADINGAGENTS_DATA_DIR=./data docker compose run --rm --entrypoint python tradingagents \
+  -c "from tradingagents.llm_clients.chatgpt_auth import list_models; [print(' ', m[1]) for m in list_models()]" || echo "  (no se pudieron listar)"
 gcloud storage cp data/chatgpt-auth.json "gs://$BK/private/tradingagents/chatgpt-auth.json" --no-user-output-enabled
 gcloud storage ls "gs://$BK/private/tradingagents/chatgpt-auth.json" >/dev/null
 rm -rf data
