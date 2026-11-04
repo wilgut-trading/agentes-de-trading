@@ -65,7 +65,7 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
     return {"ventanas": ventanas, "independientes": independientes, "sesiones": sesiones, "lado": lado,
             "objetivo": objetivos / ventanas, "stop": stops / ventanas, "ninguno": 1 - (objetivos + stops) / ventanas,
             "bajo": bajo, "alto": alto, "relacion": round(relacion, 2), "minimo": 1 / (1 + relacion),
-            "resueltas": objetivos / (objetivos + stops) if objetivos + stops else None, "resultado_medio": sum(resultados) / ventanas}
+            "resueltas": objetivos / (objetivos + stops) if objetivos + stops else None, "resultado_medio": float(sum(resultados) / ventanas)}
 
 
 def de_plan(plan: dict, ticker: str, fecha: str, sesiones: int, sin_cierre=False, tabla=None) -> dict | None:
