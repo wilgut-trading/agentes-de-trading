@@ -357,7 +357,7 @@ def test_c1_analistas_vacio(motor, monkeypatch):
     monkeypatch.setattr(ar, "precio_referencia", lambda *a: {"fecha": al.hoy()})
     motor.escribir("config/watchlist.txt", b"NVDA")
     run._encolar_diario(motor)
-    assert al.en_cola(motor)[0]["analistas"] == ["market", "news", "fundamentals"]
+    assert al.en_cola(motor)[0]["analistas"] == ["market", "social", "news", "fundamentals"]
 
 
 def test_c2_no_rebota_entre_ambientes(motor, monkeypatch):

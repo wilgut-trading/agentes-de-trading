@@ -35,7 +35,7 @@ plantillas.env.filters["md"] = lambda t: Markup(_md.render(t or ""))
 
 TICKER_RE = re.compile(r"^[A-Z0-9^][A-Z0-9.\-=^]{0,14}$")
 ANALISTAS = {"market": "Técnico", "social": "Sentimiento", "news": "Noticias", "fundamentals": "Fundamental"}
-POR_DEFECTO = (os.getenv("AGENTES_ANALISTAS") or "market,news,fundamentals").split(",")
+POR_DEFECTO = (os.getenv("AGENTES_ANALISTAS") or "market,social,news,fundamentals").split(",")
 REPO = "wilgut-trading/agentes-de-trading"
 MAX_CELDAS = 200
 _tienda_abierta = None

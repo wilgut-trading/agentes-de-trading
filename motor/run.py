@@ -310,7 +310,7 @@ def _encolar_diario(tienda):
         limpio = "".join(c if c.isalnum() else "-" for c in ticker.lower())
         with contextlib.suppress(al.Conflicto):
             al.encolar(tienda, {"tipo": "analisis", "ticker": ticker, "fecha": fecha, "rondas": 1, "usar_cartera": True,
-                                "analistas": (os.getenv("AGENTES_ANALISTAS") or "market,news,fundamentals").split(","), "origen": "diario"},
+                                "analistas": (os.getenv("AGENTES_ANALISTAS") or "market,social,news,fundamentals").split(","), "origen": "diario"},
                        f"diario-{al.AMBIENTE}-{fecha}-{limpio}")
 
 

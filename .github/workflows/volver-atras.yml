@@ -8,6 +8,7 @@ permissions: {contents: read, id-token: write}
 jobs:
   volver:
     runs-on: ubuntu-latest
+    environment: produccion
     env: {PROYECTO: "${{ vars.GCP_PROYECTO }}", BUCKET: "${{ vars.AGENTES_BUCKET }}", ETIQUETA: "${{ inputs.imagen }}", RESPALDO: "${{ inputs.respaldo }}"}
     steps:
       - uses: google-github-actions/auth@v2
