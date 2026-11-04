@@ -92,7 +92,8 @@ jobs:
         with: {name: pruebas}
       - name: PR en borrador
         env:
-          GH_TOKEN: ${{ github.token }}
+          # La organizacion no deja que GITHUB_TOKEN cree PRs. Este paso no ejecuta nada de la rama.
+          GH_TOKEN: ${{ secrets.TOKEN_ACTUALIZACION || github.token }}
           NUEVA: ${{ needs.preparar.outputs.nueva }}
           ACTUAL: ${{ needs.preparar.outputs.actual }}
           RAMA: ${{ needs.preparar.outputs.rama }}

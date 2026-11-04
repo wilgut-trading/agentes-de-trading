@@ -46,7 +46,7 @@ KEY=$(firebase apps:sdkconfig WEB "$APP" --project "$P" --json | python3 -c 'imp
 
 echo "5/5 GitHub: ambientes y variables"
 gh api -X PUT "repos/$REPO/actions/permissions" -F enabled=true -f allowed_actions=all
-gh api -X PUT "repos/$REPO/actions/permissions/workflow" -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+gh api -X PUT "repos/$REPO/actions/permissions/workflow" -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
 YO=$(gh api user --jq .id)
 echo "{\"reviewers\":[{\"type\":\"User\",\"id\":$YO}]}" | gh api -X PUT "repos/$REPO/environments/vista-previa" --input - >/dev/null
 echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' | gh api -X PUT "repos/$REPO/environments/produccion" --input - >/dev/null

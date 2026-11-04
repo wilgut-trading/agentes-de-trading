@@ -27,5 +27,6 @@ defectos, no que vaya a ganar.
   `gh api repos/wilgut-trading/agentes-de-trading/environments/vista-previa`: debe mostrar `required_reviewers`.
 - **Ambiente `produccion`:** solo para la rama `main`. Aquí, y no en el repositorio, van los secretos.
 - **Google Cloud:** el acceso sin claves desde GitHub se limita a este repositorio y a esos dos ambientes.
-- **`TOKEN_ACTUALIZACION`:** solo hace falta si una versión nueva cambia `.github/workflows`. Si lo creas,
-  ponle caducidad y permiso solo sobre este repositorio.
+- **`TOKEN_ACTUALIZACION`:** hace falta para abrir el PR de actualización, porque la organización no deja
+  que Actions cree PRs, y para subir versiones que cambien `.github/workflows`. Ponle caducidad y permiso
+  solo sobre este repositorio.
