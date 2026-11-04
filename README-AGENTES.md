@@ -23,6 +23,9 @@ defectos, no que vaya a ganar.
 
 ## Tareas comunes
 
+- **Datos macro (FRED):** requieren una clave gratuita. Guárdala con `bash motor/guardar_fred.sh`. Sin ella, cada
+  análisis saldrá "CON RESERVAS" por "Datos". Esa orden vuelve a desplegar la app, así que también cierra una vista previa abierta.
+
 - **Pausar el diario:** Google Cloud → Cloud Scheduler → `agentes-diario` → Pause.
 - **Ver el gasto:** Google Cloud → Facturación → Informes. La alerta está en US$ 10 al mes.
 - **Análisis pausado por límite:** el plan de ChatGPT llegó a su límite. Cuando se renueve, pulsa **Reactivar**.

@@ -52,9 +52,11 @@ Controles deterministas (código, sin modelo):
 | Fecha | Es una fecha pasada: exploración, sin comprobar resultados | Reservas |
 | Repetición | Otra ejecución de hoy dio otra calificación | Reservas |
 | Historial | Menos de 30 **periodos independientes** medidos al plazo vigente, o sin ventaja medida | Reservas |
-| Plan (solo swing) | Falta objetivo de precio, falta plazo en sesiones, o el plazo supera 20 sesiones | Reservas |
+| Plan (solo swing) | Falta entrada, objetivo, condición de invalidez o plazo cerrado en sesiones, o el plazo supera 20 sesiones | Reservas |
+| Plan (solo swing) | Objetivo no válido o fuera de lo alcanzable en el plazo, o stop dentro del ruido de un día | No operar |
+| Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell |
 | Riesgo/beneficio (solo swing) | Menor que tu mínimo (2,5 por defecto, se cambia en Ajustes) | No operar |
-| Riesgo/beneficio (solo swing) | Con esos niveles no se puede calcular | Reservas |
+| Riesgo/beneficio (solo swing) | Con esos niveles no se puede calcular, o solo cumple con una entrada lejana del último precio | Reservas |
 
 Debate adversarial (con el modelo):
 

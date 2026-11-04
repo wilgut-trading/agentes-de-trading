@@ -9,7 +9,7 @@ from motor import almacen as al, arbitro as ar, run
 
 MEDIDO = {"n": 100, "aciertos": 70, "tasa": .7, "bajo": .6, "alto": .8, "alfa_medio": 2.0, "ventaja": True}
 LARGO = "x" * 300
-DECISION = "**Rating**: Buy\n\n**Price Target**: 115\n\n**Time Horizon**: 10 sessions"
+DECISION = "**Rating**: Buy\n\n**Investment Thesis**: Sube.\nInvalidation: cierre por debajo de 94\n\n**Price Target**: 115\n\n**Time Horizon**: 10 sessions"
 REF = {"cierre": 100.0, "fecha": "2026-11-02", "rango_medio": 2.0}
 
 
@@ -64,7 +64,7 @@ def test_historial_y_wilson():
     from datetime import date, timedelta
 
     def e(semana, rating, alfa, pendiente=False):
-        return {"ticker": "X", "date": (date(2024, 1, 1) + timedelta(weeks=semana)).isoformat(), "rating": rating, "alpha": alfa, "pending": pendiente}
+        return {"ticker": "X", "date": (date(2024, 1, 1) + timedelta(weeks=semana)).isoformat(), "rating": rating, "alpha": alfa, "pending": pendiente, "holding": "5d"}
     entradas = [e(i, "Buy", "+2.0%") for i in range(25)] + [e(i, "Sell", "+1.0%") for i in range(25, 30)] + \
                [e(40, "Hold", "+9%"), e(41, "Buy", None, True)]
     m = ar.historial(entradas)
@@ -310,12 +310,12 @@ def _noche():
 
 def test_a5_historial_por_semanas():
     from datetime import date, timedelta
-    misma = [{"ticker": t, "date": (date(2026, 1, 5) + timedelta(days=d)).isoformat(), "rating": "Buy", "alpha": "+1.0%", "pending": False}
+    misma = [{"ticker": t, "date": (date(2026, 1, 5) + timedelta(days=d)).isoformat(), "rating": "Buy", "alpha": "+1.0%", "pending": False, "holding": "5d"}
              for t in "ABCDE" for d in range(6)]
     assert ar.historial(misma)["n"] <= 2 and not ar.historial(misma)["ventaja"]
-    alias = [{"ticker": t, "date": "2026-01-05", "rating": "Buy", "alpha": "+1%", "pending": False} for t in ("BTC-USD", "BTCUSD", "BTC-USDT")]
+    alias = [{"ticker": t, "date": "2026-01-05", "rating": "Buy", "alpha": "+1%", "pending": False, "holding": "5d"} for t in ("BTC-USD", "BTCUSD", "BTC-USDT")]
     assert ar.historial(alias)["decisiones"] == 1
-    largo = [{"ticker": "X", "date": (date(2024, 1, 1) + timedelta(weeks=w)).isoformat(), "rating": "Buy", "alpha": "+1%", "pending": False} for w in range(30)]
+    largo = [{"ticker": "X", "date": (date(2024, 1, 1) + timedelta(weeks=w)).isoformat(), "rating": "Buy", "alpha": "+1%", "pending": False, "holding": "5d"} for w in range(30)]
     assert ar.historial(largo)["ventaja"]
 
 
@@ -768,13 +768,15 @@ def test_r4_flujo_no_fuerza_ni_sube_version_con_conflicto():
 
 # --- los dos objetivos ---
 
-@pytest.mark.parametrize("texto,tope", [("10 sessions", 10), ("5-15 sesiones", 15), ("3 weeks", 15), ("3 a 4 semanas", 20), ("20 días", 20), ("3-6 months", 126), ("not provided", None), (None, None)])
+@pytest.mark.parametrize("texto,tope", [("10 sessions", 10), ("5-15 sesiones", 15), ("3 weeks", 15), ("3 a 4 semanas", 20), ("20 días", 20), ("3-6 months", 126), ("not provided", None), (None, None),
+                                         ("10 sessions then review in 6 months", 126), ("1 week to 3 months", 63), ("5 days, 2 years", 504), ("15 sessions, hold indefinitely", None),
+                                         ("0 sessions", None), ("10 trading sessions", 10), ("10-15 trading days", 15), ("2 quarters", 126)])
 def test_plazo_en_sesiones(texto, tope):
     assert ar.sesiones_de(texto) == tope
 
 
 def _swing(objetivo_precio=115, stop=95, horizonte="10 sessions", rr=2.5, rating="Buy", analisis="swing"):
-    estado = _estado(trader_investment_plan=f"**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: {stop}", final_trade_decision=f"**Rating**: Buy\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
+    estado = _estado(trader_investment_plan=f"**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: {stop}", final_trade_decision=f"**Rating**: Buy\n\nInvalidation: cierre por debajo de 94\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
     c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", rating, ["market", "news"], REF, None, 0, MEDIDO, True, _noche(), None, analisis, rr)
     return {(x["control"], x["resultado"]) for x in c}
 
@@ -874,3 +876,72 @@ def test_backtest_recibe_el_mandato(motor, monkeypatch):
         grafo = object.__new__(TradingAgentsGraph)
         assert "SWING TRADE" in grafo.resolve_instrument_context("NVDA", "stock", "2026-01-05")
     assert "SWING" not in TradingAgentsGraph.resolve_instrument_context(grafo, "NVDA", "stock", "2026-01-05")
+
+
+# --- regresiones de la ronda de objetivos ---
+
+def _swing_precio(cierre=100.0, entrada=100, stop=95, objetivo_precio=115, rango=2.0, rating="Buy", invalidez="Invalidation: cierre por debajo de 94", horizonte="10 sessions"):
+    linea_entrada = f"**Entry Price**: {entrada}\n" if entrada is not None else ""
+    estado = _estado(trader_investment_plan=f"**Action**: Buy\n{linea_entrada}**Stop Loss**: {stop}", investment_plan="**Recommendation**: " + rating,
+                     final_trade_decision=f"**Rating**: {rating}\n\n{invalidez}\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
+    ref = {"cierre": cierre, "fecha": "2026-11-02", "rango_medio": rango}
+    c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", rating, ["market", "news"], ref, None, 0, MEDIDO, True, _noche(), None, "swing", 2.5)
+    return {(x["control"], x["resultado"]) for x in c}
+
+
+def test_o1_rr_con_entrada_lejana_del_precio_real():
+    c = _swing_precio(entrada=90, stop=88, objetivo_precio=110)
+    assert ("Riesgo/beneficio", ar.RESERVAS) in c
+
+
+def test_o1_precio_ya_rebaso_el_stop():
+    assert ("Niveles", ar.NO_OPERAR) in _swing_precio(cierre=100.0, entrada=105, stop=101, objetivo_precio=115)
+
+
+@pytest.mark.parametrize("kw", [{"objetivo_precio": 1000}, {"objetivo_precio": 0}, {"stop": 99.9, "objetivo_precio": 110}])
+def test_o1_niveles_absurdos_no_cumplen_el_minimo(kw):
+    assert ("Plan", ar.NO_OPERAR) in _swing_precio(**kw)
+
+
+def test_o1_plan_exige_entrada_e_invalidez():
+    assert ("Plan", ar.RESERVAS) in _swing_precio(entrada=None)
+    assert ("Plan", ar.RESERVAS) in _swing_precio(invalidez="Momentum looks good.")
+    assert ar.invalidez_de("texto. Invalidación: cierre bajo 90 en dos sesiones. fin").startswith("cierre bajo 90")
+    assert ar.invalidez_de("Invalidation: N/A") is None
+    assert _swing_precio() == set()
+
+
+def test_o1_rr_sin_redondear():
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) in _swing_precio(entrada=100, stop=95, objetivo_precio=112.4755)
+
+
+def test_o1_historial_sin_solape_ni_plazo_ajeno():
+    from datetime import date, timedelta
+
+    def e(d, h="63d"):
+        return {"ticker": "X", "date": (date(2024, 1, 1) + timedelta(days=d)).isoformat(), "rating": "Buy", "alpha": "+1%", "pending": False, "holding": h}
+    m = ar.historial([e(28 * i) for i in range(30)], 63)
+    assert m["dias"] == 89 and m["n"] <= 10 and not m["ventaja"] and m["anos"] > 7
+    assert ar.historial([e(0, "10d"), e(1, "10d")], 10)["n"] == 1   # sin cortes por calendario
+    sin_plazo = {**e(0), "holding": None}
+    assert ar.historial([sin_plazo], 63)["decisiones"] == 0
+
+
+def test_o1_backtest_usa_los_ajustes_con_que_se_lanzo(motor, monkeypatch):
+    import tradingagents.backtest as bt
+    usados = []
+
+    def falso(tickers, dates, config, **k):
+        usados.append(config["holding_period_days"])
+        return bt.BacktestResult("x", motor.raiz / "no")
+    monkeypatch.setattr(bt, "run_backtest", falso)
+    al.guardar_json(motor, "config/ajustes.json", {"sesiones_swing": 3})
+    al.encolar(motor, {"tipo": "backtest", "tickers": ["A"], "desde": "2026-01-05", "hasta": "2026-01-05", "cada": 7, "analistas": ["market"], "objetivo": "swing", "ajustes": {"sesiones_swing": 10}})
+    run._una_vuelta(motor, "yo", False)
+    assert usados == [10]
+
+
+def test_o1_datos_nombra_la_fuente():
+    estado = _estado()
+    c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", "Buy", ["market", "news"], REF, None, 2, MEDIDO, True, _noche(), None, "swing", 2.5, ["get_macro_indicators"])
+    assert any("get_macro_indicators" in x["detalle"] for x in c)

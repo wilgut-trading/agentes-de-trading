@@ -182,3 +182,12 @@ def test_objetivo_obligatorio_y_ajustes(dentro, tienda):
     pagina = dentro.get("/historial?objetivo=inversion").text
     assert "Inversión" in pagina and "Swing trading" in pagina
     assert dentro.get("/historial?objetivo=../../x").status_code == 200
+
+
+def test_o1_analisis_antiguo_no_se_etiqueta_como_inversion(dentro, tienda):
+    id_ = _analisis(dentro).headers["location"].rsplit("/", 1)[1]
+    al.actualizar(tienda, id_, estado="terminado", rating="Hold", veredicto="CON RESERVAS", vivo=True, version="x", decision="d",
+                  arbitro={"veredicto": "CON RESERVAS", "controles": [], "referencia": {}, "debate": {"objeciones": []}})
+    assert "Anterior a objetivos" in dentro.get(f"/analisis/{id_}").text
+    assert id_ not in dentro.get("/informes?objetivo=swing").text
+    assert dentro.post("/ajustes/analisis", data={"diario": "swing", "sesiones_swing": "x", "sesiones_inversion": "63", "rr_minimo": "2.5", "csrf": _csrf(dentro)}).text == "Escribe solo números."

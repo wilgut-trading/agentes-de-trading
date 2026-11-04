@@ -21,7 +21,10 @@ _MEMORIA = {"swing": "memory/trading_memory_swing.md", "inversion": "memory/trad
 def validar(datos: dict) -> dict:
     """Solo valores con sentido; lanza ValueError si alguno no lo tiene."""
     v = {**AJUSTES, **{k: datos[k] for k in AJUSTES if k in datos}}
-    v["sesiones_swing"], v["sesiones_inversion"], v["rr_minimo"] = int(v["sesiones_swing"]), int(v["sesiones_inversion"]), float(v["rr_minimo"])
+    try:
+        v["sesiones_swing"], v["sesiones_inversion"], v["rr_minimo"] = int(v["sesiones_swing"]), int(v["sesiones_inversion"]), float(v["rr_minimo"])
+    except (ValueError, TypeError):
+        raise ValueError("Escribe solo números.") from None
     if v["diario"] not in OBJETIVOS:
         raise ValueError("Objetivo diario no válido.")
     if not 1 <= v["sesiones_swing"] <= MAX_SWING:
@@ -55,13 +58,13 @@ def mandato(objetivo: str, rr_minimo: float) -> str:
                 "or earnings dates inside it. Use long-term valuation or balance sheet facts only if they can act as a catalyst "
                 "inside the window. Never suggest open-ended holding or periodic reviews. The Trader must give Entry Price and Stop "
                 "Loss as absolute prices. The Portfolio Manager must give Price Target as an absolute price, Time Horizon as a number "
-                f"of sessions (for example `10 sessions`, never above {MAX_SWING}), and in the thesis the condition that invalidates "
-                f"the trade. The reward/risk from entry to target versus entry to stop must be at least {rr_minimo:g}. If no setup "
+                f"of sessions (for example `10 sessions`, never above {MAX_SWING}), and in the thesis a line `Invalidation: <condition>` "
+                f"saying what invalidates the trade. The reward/risk from entry to target versus entry to stop must be at least {rr_minimo:g}. If no setup "
                 "reaches it or the levels cannot be stated, rate Hold and say so.")
     return ("\n\nMANDATE: this is an INVESTMENT analysis over months to years, at least three months. Weigh valuation, earnings "
             "quality, cash flow, competitive position, capital allocation and balance sheet. Use short-term technicals only for "
             "timing. The Portfolio Manager must give Price Target as an absolute price and Time Horizon in months, and in the "
-            "thesis what would invalidate it.")
+            "thesis a line `Invalidation: <condition>`.")
 
 
 def con_mandato(objetivo: str, rr_minimo: float):

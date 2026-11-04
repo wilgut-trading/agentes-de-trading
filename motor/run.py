@@ -210,7 +210,7 @@ def _analizar(tienda, t, carpeta, simulado):
     grafo = TradingAgentsGraph(t["analistas"], config=config)
     with ob.con_mandato(objetivo, valores["rr_minimo"]):
         inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
-    final, fallos, vistos, hechas = {}, 0, set(), []
+    final, fallos, vistos, hechas, caidas = {}, 0, set(), [], []
     # El analista de sentimiento recibe sus fuentes dentro del prompt, no como herramientas.
     construir = sentimiento._build_system_message
     sin_fuentes = []
@@ -226,6 +226,7 @@ def _analizar(tienda, t, carpeta, simulado):
                     vistos.add(clave)
                     if getattr(m, "type", "") == "tool" and FALLO_DATOS.search(str(m.content)):
                         fallos += 1
+                        caidas.append(getattr(m, "name", None) or "fuente")
             final.update(estado or {})
             ahora_hechas = [n for k, n in ETAPAS if final.get(k)]
             if ahora_hechas != hechas:
@@ -233,6 +234,7 @@ def _analizar(tienda, t, carpeta, simulado):
                 total = len(ETAPAS) - (4 - len(t["analistas"]))
                 al.actualizar(tienda, id_, etapa=f"Terminó: {hechas[-1]}", avance=min(95, round(100 * len(hechas) / total)))
     fallos += len(sin_fuentes)
+    caidas += ["sentimiento"] * bool(sin_fuentes)
     if not final.get("final_trade_decision"):
         raise RuntimeError("TradingAgents terminó sin decisión final.")
     grafo.record_decision(ticker, fecha, final)
@@ -245,21 +247,22 @@ def _analizar(tienda, t, carpeta, simulado):
                   "detalle": f"Hoy ya salió {previa['rating']} para {ticker}. El historial mide esa, no esta: el desacuerdo es una señal de duda."}]
     juicio = arbitro.arbitrar(final, ticker, fecha, rating, t["analistas"], grafo.quick_thinking_llm,
                               grafo.deep_thinking_llm, medicion, fallos, vivo, extra=extra,
-                              objetivo_analisis=objetivo, rr_minimo=valores["rr_minimo"])
-    if vivo:
-        _liquidar_el_otro(grafo, objetivo, valores)
+                              objetivo_analisis=objetivo, rr_minimo=valores["rr_minimo"], fuentes_caidas=caidas)
     ruta = Path(grafo.save_reports(final, ticker, Path(config["results_dir"]) / "reports" / id_))
     tienda.escribir(f"{al.prefijo(t['ambiente'])}informes/{id_}.html", ruta.with_name("complete_report.html").read_bytes())
     al.actualizar(tienda, id_, estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(), rating=rating,
                   veredicto=juicio["veredicto"], arbitro=juicio, decision=final["final_trade_decision"],
                   simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), objetivo=objetivo, version=grafo.run_settings()["version"])
+    if vivo:   # despues de guardar el informe: un fallo aqui no debe costar el analisis
+        _liquidar_el_otro(grafo, objetivo, valores)
 
 
 def _backtest(tienda, t, carpeta):
     from tradingagents.backtest import iter_grid, run_backtest, summarize
     from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError
     objetivo = t.get("objetivo", "inversion")
-    valores = ob.ajustes(tienda, t["ambiente"])
+    # Los plazos con que se lanzo: si cambian a mitad de una reanudacion, las ventanas se mezclarian.
+    valores = {**ob.ajustes(tienda, t["ambiente"]), **t.get("ajustes", {})}
     celdas = [(ti, f) for ti in t["tickers"] for f in iter_grid(t["desde"], t["hasta"], t["cada"])]
     fallos, r = [], None
     # De una en una: run_backtest se traga los errores de cada celda, y con un limite o una

@@ -76,6 +76,15 @@ def _analistas(valores: list[str]) -> list[str]:
     return elegidos
 
 
+def _etiqueta(t) -> str:
+    """Lo que el motor aplico de verdad: un analisis anterior a los objetivos no fue de ninguno."""
+    aplicado = (t.get("arbitro") or {}).get("objetivo") if t.get("estado") == "terminado" else t.get("objetivo")
+    return ob.OBJETIVOS.get(aplicado, "Anterior a objetivos")
+
+
+plantillas.env.globals["etiqueta"] = _etiqueta
+
+
 def _objetivo(valor: str) -> str:
     if valor not in ob.OBJETIVOS:
         raise HTTPException(422, "Elige si es inversión o swing.")
@@ -186,7 +195,7 @@ def cancelar(id_: str):
 @app.get("/informes", response_class=HTMLResponse)
 def informes(request: Request, ticker: str = "", objetivo: str = ""):
     lista = [t for t in _propios("analisis") if t["estado"] == "terminado" and (not ticker or t["ticker"] == ticker.strip().upper())
-             and (not objetivo or t.get("objetivo", "inversion") == objetivo)]
+             and (not objetivo or (t.get("arbitro") or {}).get("objetivo") == objetivo)]
     return _ver(request, "informes.html", lista=lista, ticker=ticker, objetivo=objetivo)
 
 
@@ -230,7 +239,7 @@ def lanzar_backtest(tickers: str = Form(), desde: str = Form(), hasta: str = For
         raise HTTPException(422, f"Son {celdas} análisis; el máximo es {MAX_CELDAS}.")
     if confirmar.strip() != str(celdas):
         raise HTTPException(422, f"Esto lanza {celdas} análisis contra tu plan de ChatGPT. Vuelve atrás y escribe {celdas} para confirmar.")
-    al.encolar(_tienda(), {"tipo": "backtest", "tickers": lista, "desde": desde, "hasta": hasta, "cada": cada, "analistas": _analistas(analistas), "objetivo": _objetivo(objetivo)})
+    al.encolar(_tienda(), {"tipo": "backtest", "tickers": lista, "desde": desde, "hasta": hasta, "cada": cada, "analistas": _analistas(analistas), "objetivo": _objetivo(objetivo), "ajustes": ob.ajustes(_tienda())})
     _lanzar()
     return RedirectResponse("/backtests", status_code=303)
 
@@ -258,7 +267,7 @@ def guardar_ajustes(diario: str = Form(), sesiones_swing: str = Form(), sesiones
     try:
         valores = ob.validar({"diario": diario, "sesiones_swing": sesiones_swing, "sesiones_inversion": sesiones_inversion, "rr_minimo": rr_minimo.replace(",", ".")})
     except ValueError as exc:
-        raise HTTPException(422, str(exc) if "invalid" not in str(exc) else "Escribe solo números.") from None
+        raise HTTPException(422, str(exc)) from None
     al.guardar_json(_tienda(), f"{al.prefijo()}{ob.CLAVE}", valores)
     return RedirectResponse("/ajustes?aviso=Ajustes+de+an%C3%A1lisis+guardados", status_code=303)
 
