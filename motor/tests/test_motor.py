@@ -1003,7 +1003,7 @@ def test_o2_decision_real_limpia_llega_a_sin_objeciones():
         estado = _estado(
             investment_plan=f"**Recommendation**: {rating}",
             trader_investment_plan=render_trader_proposal(TraderProposal(action=accion, reasoning="Razón.", entry_price=entrada, stop_loss=stop)),
-            final_trade_decision=render_pm_decision(PortfolioDecision(rating=rating, executive_summary="Plan.", investment_thesis="Tesis clara. Invalidación: cierre más allá de 96.", price_target=objetivo, time_horizon="10 sesiones")))
+            final_trade_decision=render_pm_decision(PortfolioDecision(rating=rating, executive_summary="Plan.", investment_thesis=f"Tesis clara. Invalidación: cierre más allá de {stop}.", price_target=objetivo, time_horizon="10 sesiones")))
         j = ar.arbitrar(estado, "NVDA", "2026-11-03", rating, ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
                         precio=lambda *a: {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}, eventos=lambda *a: None, reloj=_noche(), objetivo_analisis="swing", rr_minimo=2.5)
         assert j["veredicto"] == ar.SIN_OBJECIONES, (rating, j["controles"])
@@ -1321,3 +1321,48 @@ def test_b10_presentados_ignora_lo_que_no_es_numero():
         def get_earnings_dates(self, limit=8):
             return pd.DataFrame({"Reported EPS": ["-", None, 1.5]}, index=pd.to_datetime(["2026-10-28", "2026-07-28", "2026-04-28"]))
     assert ar._presentados(E()) == {date(2026, 4, 28)}
+
+
+@pytest.mark.parametrize("cola", ["_" * 40000, "*" * 40000, "`" * 40000, "\u00a0" * 40000, "\r" * 40000, " " * 40000])
+def test_c1_ninguna_racha_cuelga_el_motor(cola):
+    import time
+    estado = _caso(f"Entry: 1{cola}Stop: 2{cola}x\nInvalidation: close below 1{cola}")
+    estado["final_trade_decision"] += f"\nNote. {cola}Invalidation: {cola}"
+    inicio = time.monotonic()
+    _swing_hold(estado, REF_CIEN, "Buy")
+    assert time.monotonic() - inicio < 2
+
+
+@pytest.mark.parametrize("entrada,stop", [("100", "105"), ("not provided", "90"), ("100", "100")])
+def test_c2_el_gerente_no_rescata_planes_rotos_del_trader(entrada, stop):
+    controles, _ = _swing_hold(_caso("Sube.\nEntry: 100\nStop: 97\nInvalidation: close below 97", entrada=entrada, stop=stop), REF_CIEN, "Buy")
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) in controles
+
+
+@pytest.mark.parametrize("entrada,stop", [("66.07", "60"), ("90", "64")])
+def test_c3_niveles_hipoteticos_de_un_trader_en_hold_no_tumban_el_plan(entrada, stop):
+    controles, plan = _swing_hold(_hold(CONDICIONAL, entrada=entrada, stop=stop))
+    assert plan["condicional"] and not any(r == ar.NO_OPERAR for _, r in controles)
+
+
+@pytest.mark.parametrize("invalidez", ["close below 150", "close below 20", "cierre sobre 96", "cierre arriba de 96", "close over 96", "price exceeds 96"])
+def test_c4_invalidez_que_no_protege_una_compra(invalidez):
+    controles, _ = _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")
+    assert ("Plan", ar.RESERVAS) in controles
+
+
+@pytest.mark.parametrize("invalidez", ["close below 96 on volume above average", "close below 96 with above-average volume", "close below 96 or above 120",
+                                       "close below 96 (or close above 96, for a short)", "cierre por debajo de 95", "close under 97"])
+def test_c5_invalidez_normal_de_una_compra(invalidez):
+    assert not _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+
+
+def test_c6_invalidez_tras_el_plazo_no_cuenta():
+    estado = _caso("Entry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115")
+    estado["final_trade_decision"] += "\nNote. Invalidation: close below 1"
+    assert ar.plan_de(estado, REF_CIEN)["invalidez"] == "close below 96"
+
+
+@pytest.mark.parametrize("prosa", ["Keep Stop: 80.50, then wait", "Entry: 80, Stop: 80, per plan"])
+def test_c7_nivel_seguido_de_coma_se_ve(prosa):
+    assert ("Niveles", ar.RESERVAS) in _swing_hold(_caso(f"{prosa}.\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]

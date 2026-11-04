@@ -97,24 +97,35 @@ def _nivel(texto: str, cual: str) -> float | None:
     return numero if math.isfinite(numero) else None
 
 
-_ROTULO = r"[>*_`\- \t]*(?:{})[ \t*_`]*:[ \t*_`]*"
-_FIN_NIVEL = r"[.;]?[*_`]*[ \t]*\n*"
-# Las tres lineas que pide el mandato, en orden y justo al final de la tesis. Un nivel suelto en el
-# razonamiento, una cita o una noticia no es el plan del gerente, aunque lleve el rotulo.
-_BLOQUE = re.compile(r"(?:\*\*Investment Thesis\*\*:[ \t]*|\n|[.!?][ \t]+)" + _ROTULO.format(ETIQUETAS["entrada"]) + rf"({_NUMERO.pattern}){_FIN_NIVEL}"
-                     + _ROTULO.format(ETIQUETAS["stop"]) + rf"({_NUMERO.pattern}){_FIN_NIVEL}" + _ROTULO.format(r"Invalidation|Invalidaci[oó]n") + r"[^\n]+\s*\Z", re.I)
-_OBJETIVO_FINAL = "**Price Target**"
+_ENTRADA, _STOP, _ROTULO_INVALIDEZ = ETIQUETAS["entrada"], ETIQUETAS["stop"], r"Invalidation|Invalidaci[oó]n"
+_ANTES_DE_ROTULO = re.compile(rf"(?<=[.;]) +(?=(?:{_ENTRADA}|{_STOP}|{_ROTULO_INVALIDEZ}) *:)", re.I)
+
+
+def _tesis(decision) -> str:
+    """Hasta el plazo: despues solo hay texto libre. Sin marcas ni rachas de blancos, que ademas
+    de estorbar a la lectura harian lentisima una busqueda."""
+    texto = re.split(r"^\*\*Time Horizon\*\*:", (decision or "").replace("\r", "\n"), maxsplit=1, flags=re.M)[0]
+    return re.sub(r"[ \t\u00a0]+", " ", re.sub(r"[*_`]+", "", texto))
 
 
 def _bloque(decision) -> tuple | None:
-    """(entrada, stop) del gerente de cartera, siempre como par: nunca se mezclan con los del trader."""
-    # Despues del plazo solo hay texto libre, y una racha de espacios haria lentisima la busqueda.
-    texto = re.split(r"^\*\*Time Horizon\*\*:", (decision or "").replace("\r\n", "\n"), maxsplit=1, flags=re.M)[0]
-    corte = texto.rfind(_OBJETIVO_FINAL)
-    m = _BLOQUE.search(re.sub(r"[ \t]*\n[ \t\n]*", "\n", re.sub(r"[ \t]+", " ", texto[:corte]))) if corte >= 0 else None
-    if not m or not (math.isfinite(float(m.group(1))) and math.isfinite(float(m.group(2)))):
+    """(entrada, stop) del gerente de cartera, solo de las tres lineas del mandato justo al final de
+    la tesis y siempre como par. Un nivel suelto en el razonamiento, una cita o una noticia no es
+    su plan, aunque lleve el rotulo."""
+    texto = _tesis(decision)
+    corte = texto.rfind("Price Target:")
+    if corte < 0:
         return None
-    return float(m.group(1)), float(m.group(2))
+    renglones = [r.strip(" >-") for r in _ANTES_DE_ROTULO.sub("\n", texto[:corte]).split("\n") if r.strip(" >-")]
+    if len(renglones) < 3:
+        return None
+    entrada, stop, invalidez = renglones[-3:]
+    entrada = re.sub(r"^Investment Thesis: *", "", entrada)
+    niveles = [re.fullmatch(rf"(?:{rotulo}) *: *({_NUMERO.pattern})[.;]?", linea, re.I) for rotulo, linea in ((_ENTRADA, entrada), (_STOP, stop))]
+    if not all(niveles) or not re.match(rf"(?:{_ROTULO_INVALIDEZ}) *:", invalidez, re.I):
+        return None
+    par = float(niveles[0].group(1)), float(niveles[1].group(1))
+    return par if all(map(math.isfinite, par)) else None
 
 
 def _niveles(estado) -> tuple:
@@ -125,7 +136,7 @@ def _niveles(estado) -> tuple:
 
 def _declarados(decision, cual) -> set:
     # Con los mismos separadores que _lineas. "Trailing stop", "Re-entry" o "2026-11-10" no son niveles.
-    return {float(v) for v in re.findall(rf"(?<![\w-])(?:{ETIQUETAS[cual]})[ \t*_`]*[:=\u2013\u2014-]+[ \t*_`$]*({_NUMERO.pattern})(?![0-9,%-]|\.[0-9])", decision or "", re.I)}
+    return {float(v) for v in re.findall(rf"(?<![\w-])(?:{ETIQUETAS[cual]})[ \t*_`]*[:=\u2013\u2014-]+[ \t*_`$]*({_NUMERO.pattern})(?![0-9%-]|[.,][0-9])", decision or "", re.I)}
 
 
 def _ilegible(texto: str, cual: str) -> bool:
@@ -236,9 +247,26 @@ _PLAZO = re.compile(r"([0-9]{1,3})(?:\s*(?:-|\u2013|a|to)\s*([0-9]{1,3}))?\s+(?:
 
 def invalidez_de(texto) -> str | None:
     """La linea rotulada de invalidez, con un nivel concreto. Se comprueba que este; que sea cierta, no."""
-    hallados = _INVALIDEZ.findall(texto or "")   # la ultima: la del plan, al final de la tesis
-    valor = re.split(r"[.;](?:\s|$)", hallados[-1].strip(" *_`"))[0].strip() if hallados else ""
+    hallados = _INVALIDEZ.findall(_tesis(texto))   # la ultima: la del plan, al final de la tesis
+    valor = re.split(r"[.;](?:\s|$)", hallados[-1].strip())[0].strip() if hallados else ""
     return valor if len(valor) >= 8 and re.search(r"\d", valor) and not _SIN_CONDICION.search(valor) else None
+
+
+_SUBE, _BAJA = r"above|over|exceeds?|encima|arriba|sobre", r"below|under|debajo|bajo"
+_LADO = re.compile(rf"\b(?:({_SUBE})|({_BAJA}))\b", re.I)
+
+
+def invalidez_incoherente(invalidez, sentido, base, stop) -> bool:
+    """Invalida una compra por abajo y una venta por arriba, cerca del stop. Sin esto una condicion
+    que ya se cumple, o que nunca llegaria, pasaria como si protegiera algo."""
+    lado = _LADO.search(invalidez)
+    if lado and bool(lado.group(1)) == (sentido > 0):
+        return True
+    precio = _NUMERO.search(invalidez)
+    if not precio or base is None:
+        return False
+    precio = float(precio.group(0))
+    return (precio - base) * sentido >= 0 or (stop is not None and abs(precio - stop) > abs(base - stop))
 
 
 def sesiones_de(horizonte) -> int | None:
@@ -259,8 +287,8 @@ def _controles_swing(c, plan, rr_minimo, referencia, sentido, trader):
         _reservas(c, "Plan", RESERVAS, "Falta la entrada: la relación riesgo/beneficio se calculó desde el último precio.")
     if plan["invalidez"] is None:
         _reservas(c, "Plan", RESERVAS, "Falta la condición que invalida la operación, con un nivel concreto.")
-    elif re.search(r"\b(?:above|encima)\b" if sentido > 0 else r"\b(?:below|debajo)\b", plan["invalidez"], re.I):
-        _reservas(c, "Plan", RESERVAS, f"La invalidez ({plan['invalidez']}) va en el mismo sentido que la operación.")
+    elif invalidez_incoherente(plan["invalidez"], sentido, base, stop):
+        _reservas(c, "Plan", RESERVAS, f"La invalidez ({plan['invalidez']}) no cuadra con el lado de la operación ni con su stop.")
     if objetivo is None:
         _reservas(c, "Plan", RESERVAS, "Falta el objetivo de precio: sin él no se puede medir riesgo/beneficio.")
     elif objetivo <= 0:
@@ -345,16 +373,21 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
         for nombre, suyo, del_gerente in zip(("entrada", "stop"), propios, bloque):
             if suyo is not None and suyo != del_gerente:
                 _reservas(c, "Niveles", RESERVAS, f"El gerente cambió {nombre} del trader, de {_p(suyo)} a {_p(del_gerente)}: se muestra la suya.")
-        # Ajustar los niveles al final no puede mejorar lo que ya salia mal con los del trader.
-        rr_trader = _relacion(*propios[:1], propios[1], objetivo)
-        if objetivo_analisis == "swing" and propios != bloque and rr_trader is not None and rr_trader < rr_minimo:
+    # Ajustar los niveles al final no puede mejorar lo que ya salia mal con los del trader. Si el
+    # no propone operar, sus niveles son hipoteticos y no cuentan.
+    del_trader = bool(bloque) and bool(sentido) and _accion(plan) != 0 and propios != bloque
+    if del_trader and objetivo_analisis == "swing" and propios[1] is not None:
+        rr_trader = _relacion(propios[0] if propios[0] is not None else (referencia or {}).get("cierre"), propios[1], objetivo)
+        if rr_trader is None and objetivo is not None:
+            _reservas(c, "Riesgo/beneficio", NO_OPERAR if sentido > 0 else RESERVAS, "Los niveles del trader no daban una relación riesgo/beneficio válida.")
+        elif rr_trader is not None and rr_trader < rr_minimo:
             _reservas(c, "Riesgo/beneficio", NO_OPERAR, f"Con los niveles del trader la relación era {rr_trader:.2f}, por debajo de tu mínimo de {rr_minimo:g}.")
     if referencia:
         margen = max(referencia["cierre"] * 0.25, 5 * referencia["rango_medio"])
-        for nombre, nivel in (("entrada", entrada), ("stop", stop), ("entrada del trader", propios[0]), ("stop del trader", propios[1])):
+        for nombre, nivel in (("La entrada", entrada), ("El stop", stop), *((("La entrada del trader", propios[0]), ("El stop del trader", propios[1])) if del_trader else ())):
             if nivel is not None and abs(nivel - referencia["cierre"]) > margen:
                 _reservas(c, "Niveles", NO_OPERAR,
-                          f"El {nombre} ({_p(nivel)}) está lejos del último precio ({_p(referencia['cierre'])}).")
+                          f"{nombre} ({_p(nivel)}) está lejos del último precio ({_p(referencia['cierre'])}).")
         if objetivo is not None and sentido and (objetivo - referencia["cierre"]) * sentido <= 0:
             _reservas(c, "Niveles", RESERVAS, f"El objetivo ({_p(objetivo)}) está del lado contrario a la decisión.")
     base = entrada if entrada is not None else (referencia or {}).get("cierre")

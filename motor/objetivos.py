@@ -59,7 +59,7 @@ def mandato(objetivo: str, rr_minimo: float) -> str:
                 "inside the window. Never suggest open-ended holding or periodic reviews. The Trader must give Entry Price and Stop "
                 "Loss as plain numbers. The Portfolio Manager must give Price Target as a plain number, Time Horizon written exactly like "
                 f"`10 sessions` (never above {MAX_SWING}), and end the thesis with exactly these three lines, in this order, with nothing after them and no quote marks: "
-                "Entry: <price>\nStop: <price>\nInvalidation: close below <price> (or close above <price>, for a short). Write them also when the rating is Hold and the trade is only "
+                "Entry: <price>\nStop: <price>\nInvalidation: close <below or above> <price>. Write them also when the rating is Hold and the trade is only "
                 f"conditional. The reward/risk from entry to target versus entry to stop must be at least {rr_minimo:g}. If no setup "
                 "reaches it or the levels cannot be stated, rate Hold, say so, and write no Entry or Stop line and no Price Target.")
     return ("\n\nMANDATE: this is an INVESTMENT analysis over months to years, at least three months. Weigh valuation, earnings "
