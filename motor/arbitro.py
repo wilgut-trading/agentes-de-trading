@@ -332,6 +332,9 @@ def _sin_cierre(ticker, fecha, referencia, vivo, reloj=None) -> bool:
 _PRECIO_CITADO = re.compile(r"(?:cierre aportado|cierre de referencia|[uú]ltimo cierre|latest close|last close|current price|precio actual)\D{0,30}?([0-9][0-9.,]*[0-9]|[0-9])", re.I)
 
 
+_FECHAS = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}/[0-9]{1,2}(?:/[0-9]{2,4})?|[0-9]{1,2} de [^\W\d_]+", re.I)
+
+
 def _a_numero(texto: str) -> float | None:
     if re.fullmatch(r"[0-9.]*[0-9],[0-9]{1,2}", texto):   # 66,39 o 1.234,56
         texto = texto.replace(".", "").replace(",", ".")
@@ -340,8 +343,8 @@ def _a_numero(texto: str) -> float | None:
 
 
 def _continuo(ticker) -> bool:
-    """Cripto y futuros cotizan casi sin pausa: su ultimo precio no se puede llamar cierre."""
-    return bool(crypto_base(ticker)) or "=F" in normalize_symbol(ticker)
+    """Cripto, futuros y divisas cotizan casi sin pausa: su ultimo precio no se puede llamar cierre."""
+    return bool(crypto_base(ticker)) or "=" in normalize_symbol(ticker)
 
 
 def contrastar_precios(controles, referencia, visto, decision, sin_cierre, continuo=False) -> None:
@@ -357,7 +360,10 @@ def contrastar_precios(controles, referencia, visto, decision, sin_cierre, conti
         _reservas(controles, "Datos", RESERVAS, "No se pudo comprobar qué precios recibieron los agentes.")
     else:
         fecha_vista, precio_visto, firme = (*visto, True)[:3]
-        resultado = NO_OPERAR if firme and not sin_cierre and not continuo else RESERVAS
+        # Ni un mercado abierto explica un dato tan lejos o tan viejo.
+        roto = abs(precio_visto - cierre) > max(cierre * 0.1, 5 * referencia["rango_medio"]) \
+            or (date.fromisoformat(referencia["fecha"]) - date.fromisoformat(fecha_vista)).days > 4
+        resultado = NO_OPERAR if roto or (firme and not sin_cierre and not continuo) else RESERVAS
         causa = "" if resultado == NO_OPERAR else " El precio pudo moverse mientras corría el análisis: revisa los niveles."
         if fecha_vista != referencia["fecha"]:
             _reservas(controles, "Datos", resultado, f"Los agentes trabajaron con precios hasta {fecha_vista}, y el último es de {referencia['fecha']}.{causa}")
@@ -365,10 +371,9 @@ def contrastar_precios(controles, referencia, visto, decision, sin_cierre, conti
             _reservas(controles, "Datos", resultado, f"Los agentes recibieron {_p(precio_visto)} como último precio, y el independiente es {_p(cierre)}.{causa}")
     if sin_cierre:   # con el mercado abierto, citar el cierre de ayer es correcto
         return
-    for texto in _PRECIO_CITADO.findall(decision or ""):
+    for texto in _PRECIO_CITADO.findall(_FECHAS.sub(" ", decision or "")):
         citado = _a_numero(texto)
-        # Fuera de esta franja es una fecha u otra cifra que siguio al rotulo, no un precio.
-        if citado is not None and 0.2 * cierre < citado < 5 * cierre and abs(citado - cierre) > tolerancia:
+        if citado is not None and abs(citado - cierre) > tolerancia:
             _reservas(controles, "Datos", RESERVAS, f"La decisión cita {_p(citado)} como último precio, y el independiente es {_p(cierre)}.")
             break
 

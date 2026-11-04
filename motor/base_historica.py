@@ -7,6 +7,8 @@ entero, porque un stop no protege de un hueco; un salto a favor no paga mas que 
 """
 from datetime import date, timedelta
 
+import numpy as np
+
 from motor.arbitro import wilson
 from tradingagents.dataflows.symbols import normalize_symbol
 
@@ -29,8 +31,8 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
     o, h, l, c = (tabla[k].to_numpy() for k in ("Open", "High", "Low", "Close"))
     if len(c) < MIN_VENTANAS + sesiones + VENTANA_VOLATILIDAD or (tabla[["Open", "High", "Low", "Close"]] <= 0).any(axis=None):
         return None
-    saltos = c[1:] / c[:-1]
-    if (saltos > 3).any() or (saltos < 1 / 3).any():   # un split sin ajustar o un dato roto, no un movimiento
+    # Un split sin ajustar o un dato roto, no un movimiento.
+    if (np.maximum(h[1:], c[1:]) / c[:-1] > 3).any() or (np.minimum(l[1:], c[1:]) / c[:-1] < 1 / 3).any():
         return None
     rangos = (tabla["High"] - tabla["Low"]) / tabla["Close"]
     volatilidad = rangos.rolling(VENTANA_VOLATILIDAD).mean().to_numpy()

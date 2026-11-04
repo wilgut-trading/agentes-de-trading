@@ -1592,3 +1592,26 @@ def test_g17_datos_rotos_no_dan_base(cambio):
 def test_g18_plazo_enorme_no_da_base():
     from motor.base_historica import calcular
     assert calcular(_tabla([100.0] * 1300), 100, 98, 105, 500) is None
+
+
+@pytest.mark.parametrize("visto,sin_cierre,continuo", [
+    (("2026-10-26", 100.0, False), True, False),    # ocho dias atras, mercado abierto
+    (("2026-11-03", 50.0, False), True, False),
+    (("2026-11-03", 50.0, False), False, True),     # cripto
+    (("2026-10-26", 100.0, True), False, True),
+])
+def test_g19_un_dato_roto_no_se_excusa_con_el_mercado_abierto(visto, sin_cierre, continuo):
+    c = []
+    ar.contrastar_precios(c, CIEN, visto, "x", sin_cierre, continuo)
+    assert [(x["control"], x["resultado"]) for x in c] == [("Datos", ar.NO_OPERAR)]
+
+
+@pytest.mark.parametrize("texto", ["current price 1000", "current price 10", "last close on 2026-11-03 was 50", "Último cierre del 3 de noviembre: 50"])
+def test_g20_citas_muy_lejanas_si_avisan(texto):
+    c = []
+    ar.contrastar_precios(c, CIEN, ("2026-11-03", 100.0, True), texto, False)
+    assert [(x["control"], x["resultado"]) for x in c] == [("Datos", ar.RESERVAS)]
+
+
+def test_g21_divisas_cotizan_sin_pausa():
+    assert ar._continuo("EURUSD=X") and ar._continuo("CL=F") and not ar._continuo("NFLX")

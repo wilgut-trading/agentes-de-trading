@@ -278,7 +278,7 @@ def _precio_visto(config, ticker, fecha) -> tuple | None:
         ultima = filas[filas["Date"] <= fecha].iloc[-1]
         # Yahoo publica el cierre unos minutos despues de las 16:00 de Nueva York.
         escrito = datetime.fromtimestamp(ruta.stat().st_mtime, ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M")
-        return ultima["Date"], float(ultima["Close"]), escrito >= f"{fecha} 16:20"
+        return ultima["Date"], float(ultima["Close"]), escrito >= f"{ultima['Date']} 16:20"
     except (OSError, ValueError, KeyError, IndexError):
         return None
 
