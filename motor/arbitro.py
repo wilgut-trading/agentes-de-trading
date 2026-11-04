@@ -322,6 +322,12 @@ def _controles_swing(c, plan, rr_minimo, referencia, sentido, trader):
         _reservas(c, "Riesgo/beneficio", RESERVAS, f"{plan['rr']:.2f} solo si entras a {_p(entrada)}; al último precio es {hoy}. Exige una orden limitada.")
 
 
+def _sin_cierre(ticker, fecha, referencia, vivo, reloj=None) -> bool:
+    """Con el mercado abierto, el ultimo precio de hoy todavia no es un cierre."""
+    ny = reloj or datetime.now(ZoneInfo("America/New_York"))
+    return bool(vivo and referencia and not crypto_base(ticker) and fecha == ny.strftime("%Y-%m-%d") and ny.hour < 16 and referencia["fecha"] == fecha)
+
+
 def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
                             fallos_datos, medicion, vivo=True, reloj=None, fecha_mercado=None, objetivo_analisis="swing",
                             rr_minimo=2.5, fuentes_caidas=()) -> list[dict]:
@@ -343,9 +349,7 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
             _reservas(c, "Frescura", NO_OPERAR, f"El último cierre es de {referencia['fecha']}, {edad} días antes.")
         if fecha_mercado and referencia["fecha"] < fecha_mercado:
             _reservas(c, "Frescura", NO_OPERAR, f"El mercado cerró el {fecha_mercado}, pero este precio es de {referencia['fecha']}.")
-        ny = (reloj or datetime.now(ZoneInfo("America/New_York")))
-        if vivo and not crypto_base(ticker) and fecha == ny.strftime("%Y-%m-%d") and ny.hour < 16 \
-                and referencia["fecha"] == fecha:
+        if _sin_cierre(ticker, fecha, referencia, vivo, reloj):
             _reservas(c, "Frescura", RESERVAS, "El mercado sigue abierto: el precio de hoy aún no es de cierre.")
 
     faltan = [a for a in analistas if len((estado.get(INFORMES[a]) or "").strip()) < 200]
@@ -500,9 +504,11 @@ def citas_validas(objeciones, decision: list[str], evidencia: list[str]) -> list
     return validas
 
 
-def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis="swing") -> dict:
+def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis="swing", sin_cierre=False) -> dict:
     decision = _renglones(estado.get("final_trade_decision"))
-    ref = f"Último cierre independiente: {referencia.get('cierre')} ({referencia.get('fecha')})." if referencia else ""
+    # Si aun no es un cierre, el fiscal no puede tomar la diferencia con el ultimo cierre por un error.
+    rotulo = "Último precio independiente, con el mercado abierto y aún sin cerrar" if sin_cierre else "Último cierre independiente"
+    ref = f"{rotulo}: {referencia.get('cierre')} ({referencia.get('fecha')})." if referencia else ""
     evidencia = _renglones("\n".join([ref] + [estado.get(INFORMES[a]) or "" for a in analistas] + [estado.get("trader_investment_plan") or ""]))
     meta = "swing de 1 a 20 sesiones" if objetivo_analisis == "swing" else "inversión de meses a años"
     caso = (f"Objetivo del análisis: {meta}; júzgala solo con ese criterio. Ticker {ticker}, fecha {fecha}, calificación {rating}.\n"
@@ -563,7 +569,8 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
     controles = controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
                                         fallos_datos, medicion, vivo, reloj, fecha_mercado, objetivo_analisis, rr_minimo, fuentes_caidas) + extra
     try:
-        adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis)
+        adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis,
+                             _sin_cierre(ticker, fecha, referencia, vivo, reloj))
     except Exception as exc:
         adversarial = {"objeciones": [], "descartadas": 0}
         _reservas(controles, "Debate", RESERVAS, f"El debate adversarial no terminó ({type(exc).__name__}).")

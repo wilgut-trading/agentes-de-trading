@@ -1377,3 +1377,35 @@ def test_e2_el_nivel_de_la_invalidez_va_tras_la_direccion():
     assert not ar.invalidez_incoherente("2 closes below 96", 1, 100, 96)
     assert not ar.invalidez_incoherente("close below 1,200", 1, 1266.9, 1200)
     assert ar.invalidez_incoherente("close < 95", -1, 100, 105)
+
+
+def test_f1_el_cache_de_precios_no_viaja_al_bucket_ni_vuelve(tmp_path):
+    """Al traerlo, su fecha de archivo era la de ahora y TradingAgents lo tomaba por recien bajado:
+    los analisis de la tarde usaban el precio de la manana."""
+    tienda = al.Local(tmp_path / "bucket")
+    base = f"{al.prefijo()}private/tradingagents/"
+    tienda.escribir(base + "cache/GOOGL-YFin-data.csv", b"viejo")
+    tienda.escribir(base + "memory/trading_memory_swing.md", b"memoria")
+    casa = tmp_path / "casa"
+    carpeta = run.Carpeta(tienda, casa)
+    carpeta.traer()
+    assert not (casa / "cache").exists() and (casa / "memory/trading_memory_swing.md").read_bytes() == b"memoria"
+    (casa / "cache").mkdir()
+    (casa / "cache/NFLX-YFin-data.csv").write_bytes(b"nuevo")
+    (casa / "memory/otra.md").write_bytes(b"otra")
+    carpeta.devolver()
+    assert tienda.leer(base + "cache/NFLX-YFin-data.csv") is None and tienda.leer(base + "memory/otra.md")[0] == b"otra"
+
+
+def test_f2_el_debate_sabe_si_el_precio_aun_no_es_un_cierre():
+    def visto(**k):
+        fiscal = Grabadora(ar.Fiscal(objeciones=[]))
+        ar.debate(fiscal, Modelo(), _estado(), "NFLX", "2026-11-03", "Hold", ["market"], {"cierre": 66.72, "fecha": "2026-11-03"}, **k)
+        return fiscal.vistos[0]
+    assert "E1: Último cierre independiente: 66.72" in visto()
+    assert "E1: Último precio independiente, con el mercado abierto y aún sin cerrar: 66.72" in visto(sin_cierre=True)
+    fiscal = Grabadora(ar.Fiscal(objeciones=[]))
+    from datetime import datetime
+    ar.arbitrar(_estado(), "NFLX", "2026-11-03", "Hold", ["market", "news"], fiscal, Modelo(), MEDIDO, vivo=True, precio=lambda *a: {**REF, "fecha": "2026-11-03"},
+                eventos=lambda *a: None, reloj=datetime(2026, 11, 3, 15, 44))
+    assert "con el mercado abierto" in fiscal.vistos[0]

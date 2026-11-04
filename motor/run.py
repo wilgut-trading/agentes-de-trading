@@ -71,9 +71,11 @@ class Carpeta:
         return al.SESION if relativa == SESION_NOMBRE else self.base + relativa
 
     def traer(self):
-        # logs/ solo crece y nada lo lee de vuelta, salvo un backtest que se reanuda.
+        # logs/ solo crece y nada lo lee de vuelta, salvo un backtest que se reanuda. cache/ no viaja:
+        # TradingAgents juzga su frescura por la fecha del archivo, y al traerlo pareceria recien
+        # bajado, asi que un precio de otra hora o de otro dia pasaria por el de hoy.
         claves = {c[len(self.base):]: c for c in self.tienda.listar(self.base)
-                  if not c[len(self.base):].startswith("logs/") or c[len(self.base):].startswith("logs/backtest/")}
+                  if not c[len(self.base):].startswith(("logs/", "cache/")) or c[len(self.base):].startswith("logs/backtest/")}
         claves[SESION_NOMBRE] = al.SESION
         for relativa, clave in claves.items():
             hallado = self.tienda.leer(clave)
@@ -115,7 +117,7 @@ class Carpeta:
         for ruta in self.casa.rglob("*") if self.lista else ():
             relativa = ruta.relative_to(self.casa).as_posix()
             if ruta.is_file() and not ruta.name.endswith((".lock", ".tmp")) and relativa != SESION_NOMBRE \
-                    and not relativa.startswith("exploracion/"):
+                    and not relativa.startswith(("exploracion/", "cache/")):
                 try:   # un archivo que falla no debe dejar sin guardar los demas
                     self._subir(relativa)
                 except Exception:

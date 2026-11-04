@@ -232,3 +232,8 @@ def test_h_analisis_guardado_antes_del_cambio_se_sigue_viendo(dentro, tienda):
 def test_d_objecion_sin_respaldo_se_dice_asi(dentro, tienda):
     pagina = _plan_pagina(dentro, tienda, PLAN, {"objeciones": [{"objecion": "o", "afirmacion": "a", "evidencia": None, "sostenida": True, "gravedad": "leve", "razon": "r"}]})
     assert "no tiene respaldo en la evidencia" in pagina and "«None»" not in pagina
+
+
+def test_h_hold_sin_operacion_lo_dice(dentro, tienda):
+    pagina = _plan_pagina(dentro, tienda, {"entrada": None, "stop": None, "objetivo": None, "rr": None, "rr_precio": None, "horizonte": "10 sessions", "invalidez": None})
+    assert "Sin operación" in pagina and "<th>Entrada</th>" not in pagina
