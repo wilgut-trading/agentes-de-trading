@@ -56,8 +56,9 @@ Controles deterministas (código, sin modelo):
 | Plan (solo swing) | Falta entrada, objetivo, condición de invalidez o plazo cerrado en sesiones, o el plazo supera 20 sesiones | Reservas |
 | Plan (solo swing) | Objetivo no válido o fuera de lo alcanzable en el plazo, o stop dentro del ruido de un día | No operar |
 | Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell o si la entrada aún no se activa |
-| Niveles | El gerente de cartera manda solo con las tres líneas `Entry`, `Stop` e `Invalidation` al final de la tesis; si no, valen las del trader, sin mezclar. Otro nivel rotulado en la decisión, o un cambio frente al trader, deja reservas; si con los niveles del trader la relación no llegaba a tu mínimo, no operar. Un nivel escrito de forma que no se puede leer como precio | Reservas |
+| Niveles | El gerente de cartera manda solo con las tres líneas `Entry`, `Stop` e `Invalidation` al final de la tesis; si no, valen las del trader, sin mezclar. Otro nivel rotulado en la decisión, o un cambio frente al trader, deja reservas; si con los niveles del trader la relación no llegaba a tu mínimo o no era válida, no operar (en venta, reservas). Los niveles de un trader que propone Hold, o de un rating Hold, son hipotéticos y no cuentan para esto. Un nivel escrito de forma que no se puede leer como precio | Reservas |
 | Plan (solo swing) | El trader propuso no operar | Reservas |
+| Plan (solo swing) | La invalidez va del lado contrario a la operación, ya se cumple o queda lejos del stop | Reservas |
 | Plan condicional (solo swing) | Hold con entrada, stop y objetivo coherentes: hoy no se abre, pero el plan pasa todos los controles de swing | Reservas, o lo que digan esos controles |
 | Plan (solo swing) | Hold con niveles sueltos que no forman un plan | Reservas |
 | Riesgo/beneficio (solo swing) | Menor que tu mínimo (2,5 por defecto, se cambia en Ajustes) | No operar |

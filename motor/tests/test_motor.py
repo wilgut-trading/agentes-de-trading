@@ -1366,3 +1366,14 @@ def test_c6_invalidez_tras_el_plazo_no_cuenta():
 @pytest.mark.parametrize("prosa", ["Keep Stop: 80.50, then wait", "Entry: 80, Stop: 80, per plan"])
 def test_c7_nivel_seguido_de_coma_se_ve(prosa):
     assert ("Niveles", ar.RESERVAS) in _swing_hold(_caso(f"{prosa}.\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+
+
+@pytest.mark.parametrize("invalidez", ["close > 96", "el precio supera 96", "cierre superior a 96", "close higher than 96", "close past 96"])
+def test_e1_invalidez_contraria_con_otras_palabras(invalidez):
+    assert ("Plan", ar.RESERVAS) in _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+
+
+def test_e2_el_nivel_de_la_invalidez_va_tras_la_direccion():
+    assert not ar.invalidez_incoherente("2 closes below 96", 1, 100, 96)
+    assert not ar.invalidez_incoherente("close below 1,200", 1, 1266.9, 1200)
+    assert ar.invalidez_incoherente("close < 95", -1, 100, 105)

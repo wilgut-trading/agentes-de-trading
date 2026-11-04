@@ -246,23 +246,24 @@ _PLAZO = re.compile(r"([0-9]{1,3})(?:\s*(?:-|\u2013|a|to)\s*([0-9]{1,3}))?\s+(?:
 
 
 def invalidez_de(texto) -> str | None:
-    """La linea rotulada de invalidez, con un nivel concreto. Se comprueba que este; que sea cierta, no."""
+    """La linea rotulada de invalidez, con un nivel concreto. Si protege la operacion lo mira invalidez_incoherente."""
     hallados = _INVALIDEZ.findall(_tesis(texto))   # la ultima: la del plan, al final de la tesis
     valor = re.split(r"[.;](?:\s|$)", hallados[-1].strip())[0].strip() if hallados else ""
     return valor if len(valor) >= 8 and re.search(r"\d", valor) and not _SIN_CONDICION.search(valor) else None
 
 
-_SUBE, _BAJA = r"above|over|exceeds?|encima|arriba|sobre", r"below|under|debajo|bajo"
+_SUBE, _BAJA = r"above|over|exceeds?|higher|past|encima|arriba|sobre|supera|superior", r"below|under|lower|debajo|bajo|inferior"
 _LADO = re.compile(rf"\b(?:({_SUBE})|({_BAJA}))\b", re.I)
 
 
 def invalidez_incoherente(invalidez, sentido, base, stop) -> bool:
     """Invalida una compra por abajo y una venta por arriba, cerca del stop. Sin esto una condicion
     que ya se cumple, o que nunca llegaria, pasaria como si protegiera algo."""
-    lado = _LADO.search(invalidez)
+    texto = re.sub(r"(?<=[0-9]),(?=[0-9]{3}(?![0-9]))", "", invalidez).replace(">", " above ").replace("<", " below ")
+    lado = _LADO.search(texto)
     if lado and bool(lado.group(1)) == (sentido > 0):
         return True
-    precio = _NUMERO.search(invalidez)
+    precio = _NUMERO.search(texto, lado.end() if lado else 0)   # "2 closes below 96": el nivel va despues
     if not precio or base is None:
         return False
     precio = float(precio.group(0))
