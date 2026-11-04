@@ -30,7 +30,7 @@ def _csrf(c):
 
 
 def _analisis(c, **kw):
-    datos = {"ticker": "NVDA", "fecha": al.hoy(), "analistas": ["market"], "csrf": _csrf(c), **kw}
+    datos = {"ticker": "NVDA", "fecha": al.hoy(), "analistas": ["market"], "objetivo": "swing", "csrf": _csrf(c), **kw}
     return c.post("/analizar", data=datos, follow_redirects=False)
 
 
@@ -134,7 +134,7 @@ def test_id_con_ruta_no_escapa(dentro):
 
 
 def test_backtest_pide_confirmacion_y_tope(dentro):
-    base = {"tickers": "NVDA", "desde": "2026-01-05", "hasta": "2026-01-12", "cada": 7, "analistas": ["market"], "csrf": _csrf(dentro)}
+    base = {"tickers": "NVDA", "desde": "2026-01-05", "hasta": "2026-01-12", "cada": 7, "analistas": ["market"], "objetivo": "swing", "csrf": _csrf(dentro)}
     assert dentro.post("/backtests", data=base).status_code == 422
     assert dentro.post("/backtests", data={**base, "confirmar": "2"}, follow_redirects=False).status_code == 303
     assert dentro.post("/backtests", data={**base, "cada": 1, "desde": "2020-01-01", "confirmar": "9"}).status_code == 422
@@ -166,3 +166,19 @@ def test_r2_c9_pr_de_un_fork_no_cuenta(monkeypatch):
 
 def test_r4_login_no_se_puede_enmarcar():
     assert "frame-ancestors 'none'" in acceso.CSP_LOGIN
+
+
+def test_objetivo_obligatorio_y_ajustes(dentro, tienda):
+    assert _analisis(dentro, objetivo="").status_code == 422
+    assert _analisis(dentro, objetivo="otro").status_code == 422
+    id_ = _analisis(dentro, objetivo="inversion").headers["location"].rsplit("/", 1)[1]
+    assert al.trabajo(tienda, id_)["objetivo"] == "inversion"
+    t = _csrf(dentro)
+    base = {"diario": "inversion", "sesiones_swing": "15", "sesiones_inversion": "100", "rr_minimo": "3,5", "csrf": t}
+    assert dentro.post("/ajustes/analisis", data=base).status_code == 200
+    assert al.leer_json(tienda, "config/ajustes.json") == {"diario": "inversion", "sesiones_swing": 15, "sesiones_inversion": 100, "rr_minimo": 3.5}
+    assert dentro.post("/ajustes/analisis", data={**base, "sesiones_swing": "25"}).status_code == 422
+    assert dentro.post("/ajustes/analisis", data={**base, "rr_minimo": "x"}).status_code == 422
+    pagina = dentro.get("/historial?objetivo=inversion").text
+    assert "Inversión" in pagina and "Swing trading" in pagina
+    assert dentro.get("/historial?objetivo=../../x").status_code == 200

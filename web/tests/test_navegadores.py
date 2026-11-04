@@ -49,6 +49,7 @@ def test_flujo_completo(servidor, motor, dispositivo, tema):
         pagina.screenshot(path=CAPTURAS / f"{nombre}-1-inicio.png", full_page=True)
         ancho = pagina.evaluate("[document.documentElement.scrollWidth, innerWidth]")
         assert ancho[0] <= ancho[1], f"scroll horizontal {ancho}"
+        assert pagina.is_checked("input[value=swing]")
         pagina.fill("input[name=ticker]", "NVDA")
         pagina.click("button.primario")
         pagina.wait_for_url("**/analisis/**")

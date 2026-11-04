@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block cuerpo %}
 <h1>Informes</h1>
-<form method="get" class="filtros"><input name="ticker" value="{{ ticker }}" placeholder="Ticker"><button>Filtrar</button></form>
-{% for t in lista %}<a class="fila" href="/analisis/{{ t.id }}"><b>{{ t.ticker }}</b> {{ t.fecha }} {% if t.simulado %}<span class="v v-NO">SIMULADO</span>{% elif t.vivo is false %}<span>Exploración</span>{% endif %} <span>{{ t.rating }}</span><span class="v v-{{ t.veredicto[:2] }}">{{ t.veredicto }}</span></a>{% else %}<p class="nota">Sin informes.</p>{% endfor %}
+<form method="get" class="filtros"><input name="ticker" value="{{ ticker }}" placeholder="Ticker"><select name="objetivo"><option value="">Todos</option>{% for k, n in objetivos.items() %}<option value="{{ k }}"{{ ' selected' if k == objetivo }}>{{ n }}</option>{% endfor %}</select><button>Filtrar</button></form>
+{% for t in lista %}<a class="fila" href="/analisis/{{ t.id }}"><b>{{ t.ticker }}</b> {{ t.fecha }} <span>{{ objetivos.get(t.objetivo or 'inversion') }}</span> {% if t.simulado %}<span class="v v-NO">SIMULADO</span>{% elif t.vivo is false %}<span>Exploración</span>{% endif %} <span>{{ t.rating }}</span><span class="v v-{{ t.veredicto[:2] }}">{{ t.veredicto }}</span></a>{% else %}<p class="nota">Sin informes.</p>{% endfor %}
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block cuerpo %}
 <h1>Nuevo análisis</h1>
 <form method="post" action="/analizar" class="tarjeta"><input type="hidden" name="csrf" value="{{ csrf }}">
+<fieldset class="objetivo"><legend>¿Qué tipo de análisis quieres?</legend>{% for k, n in objetivos.items() %}<label class="chk"><input type="radio" name="objetivo" value="{{ k }}" required{{ ' checked' if k == 'swing' }}> <b>{{ n }}</b></label>{% endfor %}<p class="nota">Swing: de 1 a 20 sesiones, con entrada, stop, objetivo y riesgo/beneficio. Inversión: de meses a años, con valoración y fundamentales.</p></fieldset>
 <label>Ticker<input name="ticker" required autocapitalize="characters" autocomplete="off" placeholder="NVDA, SPY, BTC-USD"></label>
 <label>Fecha<input type="date" name="fecha" value="{{ hoy }}" max="{{ hoy }}" required></label>
 <p class="nota">Una fecha pasada sirve para explorar, pero no cuenta en tu historial.</p>
@@ -10,5 +11,5 @@
 <label class="chk"><input type="checkbox" name="usar_cartera" value="1"> Tener en cuenta mi cartera de Ajustes</label>
 <button class="primario">Analizar</button></form>
 {% if varados or pausados %}<form method="post" action="/reactivar" class="aviso"><input type="hidden" name="csrf" value="{{ csrf }}">{% if pausados %}Hay análisis pausados por el límite de tu plan de ChatGPT.{% else %}Hay análisis en cola y ningún motor corriendo.{% endif %} <button>Reactivar</button></form>{% endif %}
-<h2>Recientes</h2>{% for t in recientes %}<a class="fila" href="/analisis/{{ t.id }}"><b>{{ t.ticker }}</b> {{ t.fecha }} {% if t.simulado %}<span class="v v-NO">SIMULADO</span>{% elif t.vivo is false %}<span>Exploración</span>{% endif %} <span>{{ t.rating or t.etapa }}</span>{% if t.veredicto %}<span class="v v-{{ t.veredicto[:2] }}">{{ t.veredicto }}</span>{% endif %}</a>{% else %}<p class="nota">Aún no hay análisis.</p>{% endfor %}
+<h2>Recientes</h2>{% for t in recientes %}<a class="fila" href="/analisis/{{ t.id }}"><b>{{ t.ticker }}</b> {{ t.fecha }} <span>{{ objetivos.get(t.objetivo or 'inversion') }}</span> {% if t.simulado %}<span class="v v-NO">SIMULADO</span>{% elif t.vivo is false %}<span>Exploración</span>{% endif %} <span>{{ t.rating or t.etapa }}</span>{% if t.veredicto %}<span class="v v-{{ t.veredicto[:2] }}">{{ t.veredicto }}</span>{% endif %}</a>{% else %}<p class="nota">Aún no hay análisis.</p>{% endfor %}
 {% endblock %}

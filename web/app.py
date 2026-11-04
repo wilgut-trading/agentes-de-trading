@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 
-from motor import almacen as al, arbitro
+from motor import almacen as al, arbitro, objetivos as ob
 from web import acceso
 
 AQUI = Path(__file__).parent
@@ -76,6 +76,12 @@ def _analistas(valores: list[str]) -> list[str]:
     return elegidos
 
 
+def _objetivo(valor: str) -> str:
+    if valor not in ob.OBJETIVOS:
+        raise HTTPException(422, "Elige si es inversión o swing.")
+    return valor
+
+
 def _lanzar() -> bool:
     """Lanza el Job solo si el candado esta libre. Si falla, el trabajo sigue en cola y se ve."""
     if al.candado_vivo(_tienda()):
@@ -89,13 +95,13 @@ def _lanzar() -> bool:
 
 def _ver(request, plantilla, **ctx):
     import tradingagents
-    return plantillas.TemplateResponse(request, plantilla, {"ambiente": al.AMBIENTE, "csrf": acceso.token_csrf(request),
+    return plantillas.TemplateResponse(request, plantilla, {"ambiente": al.AMBIENTE, "csrf": acceso.token_csrf(request), "objetivos": ob.OBJETIVOS,
                                                             "version": tradingagents.__version__, **ctx})
 
 
-def _entradas():
+def _entradas(objetivo):
     from tradingagents.memory import TradingMemoryLog
-    hallada = _tienda().leer(f"{al.prefijo()}private/tradingagents/memory/trading_memory.md")
+    hallada = _tienda().leer(f"{al.prefijo()}private/tradingagents/{ob.ruta_memoria(objetivo)}")
     if not hallada:
         return []
     with tempfile.TemporaryDirectory() as tmp:
@@ -132,12 +138,12 @@ def inicio(request: Request):
 
 
 @app.post("/analizar")
-def analizar(ticker: str = Form(), fecha: str = Form(""), rondas: int = Form(1),
+def analizar(ticker: str = Form(), objetivo: str = Form(""), fecha: str = Form(""), rondas: int = Form(1),
              analistas: list[str] = Form(default=[]), usar_cartera: str = Form("")):  # noqa: B008
     if not 1 <= rondas <= 3:
         raise HTTPException(422, "Las rondas van de 1 a 3.")
     t = al.encolar(_tienda(), {"tipo": "analisis", "ticker": _ticker(ticker), "fecha": _fecha(fecha or al.hoy()), "rondas": rondas,
-                               "analistas": _analistas(analistas), "usar_cartera": usar_cartera == "1"})
+                               "analistas": _analistas(analistas), "usar_cartera": usar_cartera == "1", "objetivo": _objetivo(objetivo)})
     if not _lanzar():
         al.actualizar(_tienda(), t["id"], aviso="No se pudo arrancar el motor; sigue en cola.")
     return RedirectResponse(f"/analisis/{t['id']}", status_code=303)
@@ -178,9 +184,10 @@ def cancelar(id_: str):
 
 
 @app.get("/informes", response_class=HTMLResponse)
-def informes(request: Request, ticker: str = ""):
-    lista = [t for t in _propios("analisis") if t["estado"] == "terminado" and (not ticker or t["ticker"] == ticker.strip().upper())]
-    return _ver(request, "informes.html", lista=lista, ticker=ticker)
+def informes(request: Request, ticker: str = "", objetivo: str = ""):
+    lista = [t for t in _propios("analisis") if t["estado"] == "terminado" and (not ticker or t["ticker"] == ticker.strip().upper())
+             and (not objetivo or t.get("objetivo", "inversion") == objetivo)]
+    return _ver(request, "informes.html", lista=lista, ticker=ticker, objetivo=objetivo)
 
 
 @app.get("/informes/{id_}/completo", response_class=HTMLResponse)
@@ -194,12 +201,13 @@ def informe_completo(id_: str):
 
 
 @app.get("/historial", response_class=HTMLResponse)
-def historial(request: Request, ticker: str = "", decision: str = ""):
-    entradas = _entradas()
+def historial(request: Request, ticker: str = "", decision: str = "", objetivo: str = "swing"):
+    objetivo = objetivo if objetivo in ob.OBJETIVOS else "swing"
+    entradas = _entradas(objetivo)
     filas = [e for e in entradas if (not ticker or e["ticker"] == ticker.strip().upper()) and (not decision or e["rating"] == decision)]
     filas.sort(key=lambda e: e["date"], reverse=True)
-    return _ver(request, "historial.html", filas=filas, m=arbitro.historial(entradas), minimo=arbitro.MIN_HISTORIAL,
-                ticker=ticker, decision=decision, ratings=list(arbitro.SENTIDO))
+    return _ver(request, "historial.html", filas=filas, m=arbitro.historial(entradas, ob.sesiones(ob.ajustes(_tienda()), objetivo)), minimo=arbitro.MIN_HISTORIAL,
+                objetivo=objetivo, ticker=ticker, decision=decision, ratings=list(arbitro.SENTIDO))
 
 
 @app.get("/backtests", response_class=HTMLResponse)
@@ -209,7 +217,7 @@ def backtests(request: Request):
 
 @app.post("/backtests")
 def lanzar_backtest(tickers: str = Form(), desde: str = Form(), hasta: str = Form(), cada: int = Form(7),
-                    analistas: list[str] = Form(default=[]), confirmar: str = Form("")):  # noqa: B008
+                    analistas: list[str] = Form(default=[]), confirmar: str = Form(""), objetivo: str = Form("")):  # noqa: B008
     from tradingagents.backtest import iter_grid
     lista = _tickers(tickers)
     if not lista or cada < 1:
@@ -222,7 +230,7 @@ def lanzar_backtest(tickers: str = Form(), desde: str = Form(), hasta: str = For
         raise HTTPException(422, f"Son {celdas} análisis; el máximo es {MAX_CELDAS}.")
     if confirmar.strip() != str(celdas):
         raise HTTPException(422, f"Esto lanza {celdas} análisis contra tu plan de ChatGPT. Vuelve atrás y escribe {celdas} para confirmar.")
-    al.encolar(_tienda(), {"tipo": "backtest", "tickers": lista, "desde": desde, "hasta": hasta, "cada": cada, "analistas": _analistas(analistas)})
+    al.encolar(_tienda(), {"tipo": "backtest", "tickers": lista, "desde": desde, "hasta": hasta, "cada": cada, "analistas": _analistas(analistas), "objetivo": _objetivo(objetivo)})
     _lanzar()
     return RedirectResponse("/backtests", status_code=303)
 
@@ -240,9 +248,19 @@ def _pr_pendiente():
 def ajustes(request: Request, aviso: str = ""):
     p = al.prefijo()
     hallada = _tienda().leer(f"{p}config/watchlist.txt")
-    return _ver(request, "ajustes.html", aviso=aviso[:200], pr=_pr_pendiente(), watchlist=hallada[0].decode().split() if hallada else [],
+    return _ver(request, "ajustes.html", aviso=aviso[:200], pr=_pr_pendiente(), ajustes_app=ob.ajustes(_tienda()), max_swing=ob.MAX_SWING, watchlist=hallada[0].decode().split() if hallada else [],
                 cartera=json.dumps(al.leer_json(_tienda(), f"{p}config/cartera.json", {"cash": None, "currency": "USD", "positions": []}), indent=1),
                 sesion=al.leer_json(_tienda(), "estado/sesion.json"), respaldo=al.leer_json(_tienda(), "respaldos/ultimo.json"))
+
+
+@app.post("/ajustes/analisis")
+def guardar_ajustes(diario: str = Form(), sesiones_swing: str = Form(), sesiones_inversion: str = Form(), rr_minimo: str = Form()):
+    try:
+        valores = ob.validar({"diario": diario, "sesiones_swing": sesiones_swing, "sesiones_inversion": sesiones_inversion, "rr_minimo": rr_minimo.replace(",", ".")})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc) if "invalid" not in str(exc) else "Escribe solo números.") from None
+    al.guardar_json(_tienda(), f"{al.prefijo()}{ob.CLAVE}", valores)
+    return RedirectResponse("/ajustes?aviso=Ajustes+de+an%C3%A1lisis+guardados", status_code=303)
 
 
 @app.post("/ajustes/watchlist")

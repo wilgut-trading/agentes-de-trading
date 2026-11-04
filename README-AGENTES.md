@@ -6,6 +6,15 @@ TradingAgents en la web, para usarlo desde tu PC, tu Mac y tu iPhone. Solo entra
 varían entre ejecuciones. Antes de usarlos en decisiones reales, haz un backtest sobre tu watchlist y
 mira la tarjeta "¿Tiene ventaja?" en Historial.
 
+## Dos tipos de análisis
+
+Al lanzar un análisis eliges uno, y cada uno tiene su propio historial:
+
+- **Swing trading:** de 1 a 20 sesiones. Exige entrada, stop, objetivo y plazo, y riesgo/beneficio mínimo de 2,5.
+- **Inversión:** de meses a años, con valoración y fundamentales.
+
+En **Ajustes** cambias el tipo del análisis diario, a cuántas sesiones se mide cada uno y el riesgo/beneficio mínimo.
+
 ## Cómo leer un resultado
 
 Arriba verás dos cosas: la calificación de TradingAgents y el veredicto del árbitro. El árbitro solo

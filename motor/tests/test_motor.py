@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -8,12 +9,13 @@ from motor import almacen as al, arbitro as ar, run
 
 MEDIDO = {"n": 100, "aciertos": 70, "tasa": .7, "bajo": .6, "alto": .8, "alfa_medio": 2.0, "ventaja": True}
 LARGO = "x" * 300
+DECISION = "**Rating**: Buy\n\n**Price Target**: 115\n\n**Time Horizon**: 10 sessions"
 REF = {"cierre": 100.0, "fecha": "2026-11-02", "rango_medio": 2.0}
 
 
 def _estado(**kw):
     return {"market_report": LARGO, "news_report": LARGO, "investment_plan": "**Recommendation**: Buy",
-            "trader_investment_plan": "**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: 95", "final_trade_decision": "**Rating**: Buy", **kw}
+            "trader_investment_plan": "**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: 95", "final_trade_decision": DECISION, **kw}
 
 
 def _controles(estado=None, rating="Buy", ref=REF, resultados=None, fallos=0, medicion=MEDIDO, fecha="2026-11-03", ticker="NVDA", vivo=True):
@@ -540,7 +542,7 @@ def test_r2_a1_el_texto_libre_posterior_no_tapa_los_campos_reales():
     trader = render_trader_proposal(TraderProposal(action="Buy", reasoning="r", entry_price=100.0, stop_loss=105.0, position_sizing="1 %\nStop: 95 si abre con hueco"))
     assert ar._nivel(trader, "stop") == 105.0
     assert ("Niveles", ar.NO_OPERAR) in _controles(_estado(trader_investment_plan=trader))
-    decision = "**Rating**: Buy\n\n**Price Target**: 80\n\n**Time Horizon**: 3 meses\nObjetivo: 130"
+    decision = "**Rating**: Buy\n\n**Price Target**: 80\n\n**Time Horizon**: 10 sessions\nObjetivo: 130"
     assert ("Niveles", ar.RESERVAS) in _controles(_estado(final_trade_decision=decision))
 
 
@@ -762,3 +764,113 @@ def test_r4_flujo_no_fuerza_ni_sube_version_con_conflicto():
     assert "--force" not in flujo and 'rev-parse -q --verify "refs/remotes/origin/$RAMA"' in flujo
     conflicto = flujo[flujo.index('if [ "$CONFLICTO" = true ]; then'):flujo.index("git push")]
     assert conflicto.index("--allow-empty") < conflicto.index("else") < conflicto.index("VERSION_BASE")
+
+
+# --- los dos objetivos ---
+
+@pytest.mark.parametrize("texto,tope", [("10 sessions", 10), ("5-15 sesiones", 15), ("3 weeks", 15), ("3 a 4 semanas", 20), ("20 días", 20), ("3-6 months", 126), ("not provided", None), (None, None)])
+def test_plazo_en_sesiones(texto, tope):
+    assert ar.sesiones_de(texto) == tope
+
+
+def _swing(objetivo_precio=115, stop=95, horizonte="10 sessions", rr=2.5, rating="Buy", analisis="swing"):
+    estado = _estado(trader_investment_plan=f"**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: {stop}", final_trade_decision=f"**Rating**: Buy\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
+    c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", rating, ["market", "news"], REF, None, 0, MEDIDO, True, _noche(), None, analisis, rr)
+    return {(x["control"], x["resultado"]) for x in c}
+
+
+def test_riesgo_beneficio_minimo():
+    assert _swing(115, 95) == set()                         # 3,0
+    assert _swing(112.5, 95) == set()                       # 2,5 justo
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) in _swing(110, 95)   # 2,0
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) in _swing(115, 95, rr=4)
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) not in _swing(110, 95, analisis="inversion")
+
+
+def test_plan_obligatorio_solo_en_swing():
+    assert ("Plan", ar.RESERVAS) in _swing("not provided")
+    assert ("Plan", ar.RESERVAS) in _swing(115, 95, "not provided")
+    assert ("Plan", ar.RESERVAS) in _swing(115, 95, "3 months")
+    assert not {c for c in _swing("not provided", 95, "not provided", analisis="inversion") if c[0] == "Plan"}
+
+
+def test_plan_visible():
+    p = ar.plan_de(_estado(), REF)
+    assert (p["entrada"], p["stop"], p["objetivo"], p["rr"], p["horizonte"]) == (100, 95, 115, 3.0, "10 sessions")
+
+
+def test_historial_no_mezcla_plazos_ni_solapa():
+    from datetime import date, timedelta
+
+    def e(d, h):
+        return {"ticker": "X", "date": (date(2024, 1, 1) + timedelta(days=d)).isoformat(), "rating": "Buy", "alpha": "+1%", "pending": False, "holding": h}
+    assert ar.historial([e(0, "5d"), e(1, "10d")], 10)["decisiones"] == 1
+    # 30 decisiones en 30 semanas seguidas, medidas a 10 sesiones: solo 15 periodos independientes.
+    m = ar.historial([e(7 * i, "10d") for i in range(30)], 10)
+    assert m["dias"] == 14 and m["n"] <= 16 and not m["ventaja"]
+
+
+def test_ajustes_se_validan(tmp_path):
+    from motor import objetivos as ob
+    t = al.Local(tmp_path)
+    assert ob.ajustes(t) == ob.AJUSTES
+    for malo in ({"sesiones_swing": 21}, {"sesiones_swing": 0}, {"sesiones_inversion": 20}, {"rr_minimo": 0.5}, {"rr_minimo": "nan"}, {"diario": "x"}):
+        with pytest.raises(ValueError):
+            ob.validar(malo)
+    al.guardar_json(t, ob.CLAVE, {"sesiones_swing": 999})
+    assert ob.ajustes(t)["sesiones_swing"] == 10   # archivo danado: valores por defecto
+
+
+class Grabador:
+    """Modelo falso que guarda cada prompt: asi se prueba quien recibe el mandato."""
+    prompts = []
+
+
+def _circuito(motor, monkeypatch, objetivo):
+    from motor import simulado
+    from motor.simulado import Falso
+    Grabador.prompts = []
+    original = Falso._generate
+
+    def grabar(self, messages, *a, **k):
+        Grabador.prompts.append(" ".join(str(m.content) for m in messages))
+        return original(self, messages, *a, **k)
+    monkeypatch.setattr(Falso, "_generate", grabar)
+    simulado.instalar()
+    monkeypatch.setattr(ar, "precio_referencia", lambda *a: {"cierre": 100.0, "fecha": al.hoy(), "rango_medio": 2.0})
+    monkeypatch.setattr(ar, "proximos_resultados", lambda *a: None)
+    # TradingAgents fija su carpeta al importarse; en el motor real HOME cambia antes de eso.
+    monkeypatch.setenv("TRADINGAGENTS_MEMORY_LOG_PATH", os.path.join(os.environ["HOME"], ".tradingagents/memory/trading_memory.md"))
+    t = _trabajo(motor, objetivo=objetivo, analistas=["market", "news", "fundamentals"])
+    run._una_vuelta(motor, "yo", False)
+    return al.trabajo(motor, t["id"])
+
+
+@pytest.mark.parametrize("objetivo,texto", [("swing", "SWING TRADE"), ("inversion", "INVESTMENT analysis")])
+def test_el_mandato_llega_y_cada_objetivo_tiene_su_memoria(motor, monkeypatch, objetivo, texto):
+    from motor import objetivos as ob
+    fin = _circuito(motor, monkeypatch, objetivo)
+    assert fin["estado"] == "terminado", fin.get("error")
+    assert fin["objetivo"] == objetivo
+    assert sum(texto in p for p in Grabador.prompts) >= 4
+    otro = "INVESTMENT analysis" if objetivo == "swing" else "SWING TRADE"
+    assert not any(otro in p for p in Grabador.prompts)
+    claves = motor.listar("private/tradingagents/memory/")
+    assert any(c.endswith(ob.ruta_memoria(objetivo)) for c in claves)
+    assert not any(c.endswith(ob.ruta_memoria("inversion" if objetivo == "swing" else "swing")) for c in claves)
+
+
+def test_medicion_configurable_llega_al_framework(motor):
+    from motor import objetivos as ob
+    assert run._config("swing", {**ob.AJUSTES, "sesiones_swing": 7})["holding_period_days"] == 7
+    assert run._config("inversion")["memory_log_path"].endswith("trading_memory.md")
+    assert run._config("swing")["memory_log_path"].endswith("trading_memory_swing.md")
+
+
+def test_backtest_recibe_el_mandato(motor, monkeypatch):
+    from motor import objetivos as ob
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+    with ob.con_mandato("swing", 2.5):
+        grafo = object.__new__(TradingAgentsGraph)
+        assert "SWING TRADE" in grafo.resolve_instrument_context("NVDA", "stock", "2026-01-05")
+    assert "SWING" not in TradingAgentsGraph.resolve_instrument_context(grafo, "NVDA", "stock", "2026-01-05")

@@ -47,11 +47,14 @@ Controles deterministas (código, sin modelo):
 | Niveles | Entrada o stop lejos del precio, o stop al lado equivocado en Buy u Overweight | No operar |
 | Niveles | Sin stop legible, u objetivo al lado contrario. En Underweight o Sell, stop por debajo del precio: vale si reduces una posición larga, no si abres un corto | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
-| Resultados | Hay presentación de resultados dentro de la ventana de 5 sesiones | Reservas |
+| Resultados | Hay presentación de resultados dentro de la operación (swing: 28 días; inversión: 10 días) | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
 | Fecha | Es una fecha pasada: exploración, sin comprobar resultados | Reservas |
 | Repetición | Otra ejecución de hoy dio otra calificación | Reservas |
-| Historial | Menos de 30 **semanas** con decisiones liquidadas, o sin ventaja medida | Reservas |
+| Historial | Menos de 30 **periodos independientes** medidos al plazo vigente, o sin ventaja medida | Reservas |
+| Plan (solo swing) | Falta objetivo de precio, falta plazo en sesiones, o el plazo supera 20 sesiones | Reservas |
+| Riesgo/beneficio (solo swing) | Menor que tu mínimo (2,5 por defecto, se cambia en Ajustes) | No operar |
+| Riesgo/beneficio (solo swing) | Con esos niveles no se puede calcular | Reservas |
 
 Debate adversarial (con el modelo):
 

@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from unittest import mock
 
-from motor import almacen as al
+from motor import almacen as al, objetivos as ob
 
 log = logging.getLogger("motor")
 LATIDO_S = 30
@@ -155,11 +155,27 @@ def _latido(tienda, dueno, carpeta, parar):
             log.exception("Latido fallido; se reintenta")
 
 
-def _config():
+def _config(objetivo="inversion", valores=None):
     from tradingagents.default_config import build_default_config
     config = build_default_config()
     config["llm_provider"] = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "chatgpt")
+    config["holding_period_days"] = ob.sesiones(valores or ob.AJUSTES, objetivo)
+    casa = Path(config["memory_log_path"]).parent.parent
+    config["memory_log_path"] = str(casa / ob.ruta_memoria(objetivo))
     return config
+
+
+def _liquidar_el_otro(grafo, objetivo, valores):
+    """Si solo usas un objetivo, las decisiones del otro tambien deben llegar a medirse."""
+    from tradingagents.dataflows.config import run_config
+    from tradingagents.memory import TradingMemoryLog, settlement
+    otro = "inversion" if objetivo == "swing" else "swing"
+    config = _config(otro, valores)
+    try:
+        with run_config(config):
+            settlement.settle_all_pending(TradingMemoryLog(config), grafo.reflector, config, wait=False)
+    except Exception:
+        log.exception("No se pudieron liquidar las decisiones de %s", otro)
 
 
 def _analizar(tienda, t, carpeta, simulado):
@@ -173,7 +189,9 @@ def _analizar(tienda, t, carpeta, simulado):
     from tradingagents.memory import TradingMemoryLog
     from tradingagents.portfolio import PortfolioContext
     id_, ticker, fecha = t["id"], t["ticker"], t["fecha"]
-    config = _config()
+    objetivo = t.get("objetivo", "inversion")
+    valores = ob.ajustes(tienda, t["ambiente"])
+    config = _config(objetivo, valores)
     config.update(max_debate_rounds=t["rondas"], max_risk_discuss_rounds=t["rondas"])
     cartera = None
     if t.get("usar_cartera"):
@@ -182,7 +200,7 @@ def _analizar(tienda, t, carpeta, simulado):
     # Sabado o domingo no hay sesion que medir, salvo en cripto.
     vivo = fecha == al.hoy() and not simulado and (date.fromisoformat(fecha).weekday() < 5 or bool(crypto_base(ticker)))
     registradas = TradingMemoryLog(config).load_entries()
-    medicion = arbitro.historial(registradas)
+    medicion = arbitro.historial(registradas, ob.sesiones(valores, objetivo))
     previa = next((e for e in registradas if vivo and normalize_symbol(e["ticker"]) == normalize_symbol(ticker) and e["date"] == fecha), None)
     if not vivo:
         # Una fecha pasada no entra al historial: las noticias de ese dia no estan archivadas,
@@ -190,7 +208,8 @@ def _analizar(tienda, t, carpeta, simulado):
         config["memory_log_path"] = str(carpeta.casa / "exploracion" / f"{id_}.md")
 
     grafo = TradingAgentsGraph(t["analistas"], config=config)
-    inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
+    with ob.con_mandato(objetivo, valores["rr_minimo"]):
+        inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
     final, fallos, vistos, hechas = {}, 0, set(), []
     # El analista de sentimiento recibe sus fuentes dentro del prompt, no como herramientas.
     construir = sentimiento._build_system_message
@@ -225,24 +244,30 @@ def _analizar(tienda, t, carpeta, simulado):
         extra = [{"control": "Repetición", "resultado": arbitro.RESERVAS,
                   "detalle": f"Hoy ya salió {previa['rating']} para {ticker}. El historial mide esa, no esta: el desacuerdo es una señal de duda."}]
     juicio = arbitro.arbitrar(final, ticker, fecha, rating, t["analistas"], grafo.quick_thinking_llm,
-                              grafo.deep_thinking_llm, medicion, fallos, vivo, extra=extra)
+                              grafo.deep_thinking_llm, medicion, fallos, vivo, extra=extra,
+                              objetivo_analisis=objetivo, rr_minimo=valores["rr_minimo"])
+    if vivo:
+        _liquidar_el_otro(grafo, objetivo, valores)
     ruta = Path(grafo.save_reports(final, ticker, Path(config["results_dir"]) / "reports" / id_))
     tienda.escribir(f"{al.prefijo(t['ambiente'])}informes/{id_}.html", ruta.with_name("complete_report.html").read_bytes())
     al.actualizar(tienda, id_, estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(), rating=rating,
                   veredicto=juicio["veredicto"], arbitro=juicio, decision=final["final_trade_decision"],
-                  simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), version=grafo.run_settings()["version"])
+                  simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), objetivo=objetivo, version=grafo.run_settings()["version"])
 
 
 def _backtest(tienda, t, carpeta):
     from tradingagents.backtest import iter_grid, run_backtest, summarize
     from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError
+    objetivo = t.get("objetivo", "inversion")
+    valores = ob.ajustes(tienda, t["ambiente"])
     celdas = [(ti, f) for ti in t["tickers"] for f in iter_grid(t["desde"], t["hasta"], t["cada"])]
     fallos, r = [], None
     # De una en una: run_backtest se traga los errores de cada celda, y con un limite o una
     # sesion caida seguir con las demas solo gastaria intentos. Reanudar salta lo ya hecho.
     for i, (ticker, fecha) in enumerate(celdas):
         al.actualizar(tienda, t["id"], etapa=f"Análisis {i + 1} de {len(celdas)}: {ticker} {fecha}", avance=round(100 * i / len(celdas)))
-        r = run_backtest([ticker], [fecha], _config(), selected_analysts=t["analistas"], run_id=t["id"])
+        with ob.con_mandato(objetivo, valores["rr_minimo"]):
+            r = run_backtest([ticker], [fecha], _config(objetivo, valores), selected_analysts=t["analistas"], run_id=t["id"])
         for _, _, error in r.failures:
             if _es_limite(error):
                 raise RuntimeError("rate limit: " + error[:200])
@@ -297,6 +322,7 @@ def _atender(tienda, t, carpeta, simulado) -> bool:
 def _encolar_diario(tienda):
     from motor import arbitro
     fecha = al.hoy()
+    objetivo = ob.ajustes(tienda)["diario"]
     hallada = tienda.leer(f"{al.prefijo()}config/watchlist.txt")
     tickers = hallada[0].decode().split() if hallada else []
     try:
@@ -309,9 +335,9 @@ def _encolar_diario(tienda):
     for ticker in tickers:
         limpio = "".join(c if c.isalnum() else "-" for c in ticker.lower())
         with contextlib.suppress(al.Conflicto):
-            al.encolar(tienda, {"tipo": "analisis", "ticker": ticker, "fecha": fecha, "rondas": 1, "usar_cartera": True,
+            al.encolar(tienda, {"tipo": "analisis", "ticker": ticker, "fecha": fecha, "rondas": 1, "usar_cartera": True, "objetivo": objetivo,
                                 "analistas": (os.getenv("AGENTES_ANALISTAS") or "market,social,news,fundamentals").split(","), "origen": "diario"},
-                       f"diario-{al.AMBIENTE}-{fecha}-{limpio}")
+                       f"diario-{al.AMBIENTE}-{fecha}-{objetivo}-{limpio}")
 
 
 def _una_vuelta(tienda, dueno, simulado):

@@ -37,8 +37,8 @@ def precio_referencia(ticker: str, fecha: str) -> dict:
             "rango_medio": float(rangos.mean())}
 
 
-def proximos_resultados(ticker: str, fecha: str) -> str | None:
-    """Fecha de resultados dentro de la ventana de 5 sesiones, o None. Lanza si no se sabe."""
+def proximos_resultados(ticker: str, fecha: str, dias: int = 10) -> str | None:
+    """Fecha de resultados dentro de la ventana de la operacion, o None. Lanza si no se sabe."""
     import yfinance as yf
     fechas = (yf.Ticker(normalize_symbol(ticker)).calendar or {}).get("Earnings Date") or []
     if not fechas:
@@ -47,7 +47,7 @@ def proximos_resultados(ticker: str, fecha: str) -> str | None:
     if all(f < inicio for f in fechas):   # solo fechas viejas: no se sabe la proxima
         raise LookupError("sin fecha futura de resultados")
     for f in fechas:
-        if inicio <= f <= inicio + timedelta(days=10):
+        if inicio <= f <= inicio + timedelta(days=dias):
             return f.isoformat()
     return None
 
@@ -113,32 +113,70 @@ def wilson(aciertos: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (centro - margen) / d, (centro + margen) / d
 
 
-def historial(entradas: list[dict]) -> dict:
-    """Mide las decisiones vivas liquidadas, por semanas: las de una misma semana se mueven
-    juntas con el mercado y sus ventanas se solapan, asi que no son pruebas independientes.
-    Mantener (Hold) no afirma direccion."""
-    vistas, semanas = set(), {}
+def historial(entradas: list[dict], sesiones: int = 5) -> dict:
+    """Mide las decisiones vivas liquidadas, por periodos sin solaparse: las de un mismo periodo
+    se mueven juntas con el mercado y sus ventanas se pisan, asi que no son pruebas independientes.
+    Solo cuenta lo medido al plazo vigente. Mantener (Hold) no afirma direccion."""
+    dias = min(28, max(7, math.ceil(sesiones * 7 / 5)))
+    vistas, periodos = set(), {}
     for e in entradas:
         sentido = SENTIDO.get(e.get("rating"), 0)
         clave = (normalize_symbol(e.get("ticker") or ""), e.get("date"))
+        if e.get("holding") and e["holding"] != f"{sesiones}d":
+            continue
         try:
             alfa = float((e.get("alpha") or "").strip().rstrip("%"))
-            semana = date.fromisoformat(e["date"]).isocalendar()[:2]
+            periodo = date.fromisoformat(e["date"]).toordinal() // dias
         except (ValueError, KeyError, TypeError):
             continue
         if sentido and not e.get("pending") and clave not in vistas:
             vistas.add(clave)
-            semanas.setdefault(semana, []).append(alfa * sentido)
-    medias = [sum(v) / len(v) for v in semanas.values()]
+            periodos.setdefault(periodo, []).append(alfa * sentido)
+    medias = [sum(v) / len(v) for v in periodos.values()]
     aciertos = sum(m > 0 for m in medias)
     bajo, alto = wilson(aciertos, len(medias))
     return {"n": len(medias), "decisiones": len(vistas), "aciertos": aciertos, "tasa": aciertos / len(medias) if medias else None,
-            "bajo": bajo, "alto": alto, "alfa_medio": sum(medias) / len(medias) if medias else None,
+            "bajo": bajo, "alto": alto, "alfa_medio": sum(medias) / len(medias) if medias else None, "dias": dias, "sesiones": sesiones,
             "ventaja": len(medias) >= MIN_HISTORIAL and bajo > 0.5 and sum(medias) > 0}
 
 
+def plan_de(estado, referencia) -> dict:
+    """Los niveles que el dueno va a operar, y su relacion riesgo/beneficio si se puede calcular."""
+    plan_texto, decision = estado.get("trader_investment_plan") or "", estado.get("final_trade_decision")
+    entrada, stop, objetivo = _nivel(plan_texto, "entrada"), _nivel(plan_texto, "stop"), _nivel(decision, "objetivo")
+    base = entrada if entrada is not None else (referencia or {}).get("cierre")
+    rr = None
+    if None not in (base, stop, objetivo) and base != stop and (objetivo - base) * (base - stop) > 0:
+        rr = round(abs(objetivo - base) / abs(base - stop), 2)
+    horizonte = _lineas(r"Time Horizon|Horizonte|Plazo", decision)
+    return {"entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr, "horizonte": horizonte[-1].strip() if horizonte else None}
+
+
+def sesiones_de(horizonte) -> int | None:
+    """El tope del plazo en sesiones de mercado, o None si no se entiende."""
+    m = re.search(r"(\d+)(?:\s*(?:-|a|to|\u2013)\s*(\d+))?\s*(ses|d[ií]a|day|sem|week|mes|month)", horizonte or "", re.I)
+    if not m:
+        return None
+    return int(m.group(2) or m.group(1)) * {"ses": 1, "d": 1, "s": 5, "w": 5, "m": 21}[("ses" if m.group(3).lower().startswith("ses") else m.group(3)[0].lower())]
+
+
+def _controles_swing(c, plan, rr_minimo):
+    if plan["objetivo"] is None:
+        _reservas(c, "Plan", RESERVAS, "Falta el objetivo de precio: sin él no se puede medir riesgo/beneficio.")
+    tope = sesiones_de(plan["horizonte"])
+    if tope is None:
+        _reservas(c, "Plan", RESERVAS, "Falta un plazo en sesiones.")
+    elif tope > 20:
+        _reservas(c, "Plan", RESERVAS, f"El plazo ({plan['horizonte']}) supera las 20 sesiones de un swing.")
+    if plan["rr"] is not None and plan["rr"] < rr_minimo:
+        _reservas(c, "Riesgo/beneficio", NO_OPERAR, f"La relación es {plan['rr']:g}, por debajo de tu mínimo de {rr_minimo:g}.")
+    elif plan["rr"] is None and plan["objetivo"] is not None and plan["stop"] is not None:
+        _reservas(c, "Riesgo/beneficio", RESERVAS, "Con esos niveles no se puede calcular la relación riesgo/beneficio.")
+
+
 def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
-                            fallos_datos, medicion, vivo=True, reloj=None, fecha_mercado=None) -> list[dict]:
+                            fallos_datos, medicion, vivo=True, reloj=None, fecha_mercado=None, objetivo_analisis="swing",
+                            rr_minimo=2.5) -> list[dict]:
     c = []
     if is_review(rating) or rating not in SENTIDO:
         _reservas(c, "Calificación", NO_OPERAR, f"No se pudo leer una calificación válida ({rating}).")
@@ -187,8 +225,10 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
         # Vender puede ser reducir una posicion larga, cuyo stop de proteccion va por debajo.
         _reservas(c, "Niveles", NO_OPERAR if sentido > 0 else RESERVAS, f"El stop ({stop:,.2f}) está del lado equivocado de {base:,.2f}"
                   + ("." if sentido > 0 else ": solo es válido si reduces una posición larga, no si abres un corto."))
-    elif stop is None and sentido:
+    elif stop is None and sentido and objetivo_analisis == "swing":
         _reservas(c, "Niveles", RESERVAS, "No se pudo leer un stop: define tú la salida antes de operar.")
+    if objetivo_analisis == "swing" and sentido:
+        _controles_swing(c, plan_de(estado, referencia), rr_minimo)
 
     investigacion, trader = _rating_en(estado.get("investment_plan")), _accion(plan)
     for nombre, otro in (("gerente de investigación", investigacion), ("trader", trader)):
@@ -208,7 +248,7 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
 
     if medicion["n"] < MIN_HISTORIAL:
         _reservas(c, "Historial", RESERVAS,
-                  f"Solo {medicion['n']} de {MIN_HISTORIAL} semanas medidas: la ventaja aún no está demostrada.")
+                  f"Solo {medicion['n']} de {MIN_HISTORIAL} periodos independientes medidos: la ventaja aún no está demostrada.")
     elif not medicion["ventaja"]:
         _reservas(c, "Historial", RESERVAS, "Lo medido hasta hoy no demuestra ventaja frente al índice.")
     return c
@@ -268,12 +308,13 @@ def citas_validas(objeciones, decision: str, evidencia: str) -> list:
             and _plano(o.afirmacion) in d and _plano(o.evidencia) in e]
 
 
-def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia) -> dict:
+def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis="swing") -> dict:
     decision = estado.get("final_trade_decision") or ""
     partes = [estado.get(INFORMES[a]) or "" for a in analistas] + [estado.get("trader_investment_plan") or ""]
     evidencia = "\n\n".join(partes)
     ref = f"Último cierre independiente: {referencia.get('cierre')} ({referencia.get('fecha')})." if referencia else ""
-    caso = (f"Ticker {ticker}, fecha {fecha}, calificación {rating}. {ref}\n"
+    meta = "swing de 1 a 20 sesiones" if objetivo_analisis == "swing" else "inversión de meses a años"
+    caso = (f"Objetivo del análisis: {meta}; júzgala solo con ese criterio. Ticker {ticker}, fecha {fecha}, calificación {rating}. {ref}\n"
             f"<decision>\n{_dato(decision)}\n</decision>\n<evidencia>\n{_dato(evidencia)}\n</evidencia>")
     fiscal = llm_rapido.with_structured_output(Fiscal).invoke(
         "Eres fiscal: intenta demostrar que esta decisión de trading no se sostiene: números que no "
@@ -306,14 +347,16 @@ def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, r
 
 
 def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo, medicion,
-             fallos_datos=0, vivo=True, precio=None, eventos=None, reloj=None, extra=()) -> dict:
+             fallos_datos=0, vivo=True, precio=None, eventos=None, reloj=None, extra=(),
+             objetivo_analisis="swing", rr_minimo=2.5) -> dict:
     precio, eventos = precio or precio_referencia, eventos or proximos_resultados
     try:
         referencia = precio(ticker, fecha)
     except Exception:
         referencia = {}
     try:
-        resultados = None if crypto_base(ticker) or not vivo else eventos(ticker, fecha)
+        # En swing cuenta toda la operacion: 20 sesiones son unos 28 dias de calendario.
+        resultados = None if crypto_base(ticker) or not vivo else eventos(ticker, fecha, 28 if objetivo_analisis == "swing" else 10)
     except Exception:
         resultados = Ellipsis
     fecha_mercado = None
@@ -324,9 +367,9 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
         if not fecha_mercado:
             _reservas(extra, "Frescura", RESERVAS, "No se pudo comprobar la última sesión del mercado.")
     controles = controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
-                                        fallos_datos, medicion, vivo, reloj, fecha_mercado) + extra
+                                        fallos_datos, medicion, vivo, reloj, fecha_mercado, objetivo_analisis, rr_minimo) + extra
     try:
-        adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia)
+        adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis)
     except Exception as exc:
         adversarial = {"objeciones": [], "descartadas": 0}
         _reservas(controles, "Debate", RESERVAS, f"El debate adversarial no terminó ({type(exc).__name__}).")
@@ -336,5 +379,5 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
         if o["sostenida"]:
             _reservas(controles, "Debate", NO_OPERAR if o["gravedad"] == "grave" else RESERVAS, o["objecion"])
     veredicto = max((c["resultado"] for c in controles), key=_ORDEN.get, default=SIN_OBJECIONES)
-    return {"veredicto": veredicto, "controles": controles, "referencia": referencia,
+    return {"veredicto": veredicto, "controles": controles, "referencia": referencia, "plan": plan_de(estado, referencia),
             "debate": adversarial, "medicion": medicion}
