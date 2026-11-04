@@ -48,7 +48,7 @@ Controles deterministas (código, sin modelo):
 | Niveles | Sin stop legible, u objetivo al lado contrario. En Underweight o Sell, stop por debajo del precio: vale si reduces una posición larga, no si abres un corto | Reservas |
 | Lectura | Solo cuenta lo escrito en la forma exacta: precios como número limpio, plazo como `10 sesiones`, invalidez con un nivel. Lo demás no se adivina | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
-| Resultados | Hay presentación de resultados dentro de la operación (swing: 28 días; inversión: 10 días) | Reservas |
+| Resultados | Hay presentación de resultados dentro de la operación (swing: 28 días; inversión: 10 días), o no se sabe. Una fecha pasada solo descarta la ventana si consta como presentada y es reciente | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
 | Fecha | Es una fecha pasada: exploración, sin comprobar resultados | Reservas |
 | Repetición | Otra ejecución de hoy dio otra calificación | Reservas |
@@ -56,7 +56,7 @@ Controles deterministas (código, sin modelo):
 | Plan (solo swing) | Falta entrada, objetivo, condición de invalidez o plazo cerrado en sesiones, o el plazo supera 20 sesiones | Reservas |
 | Plan (solo swing) | Objetivo no válido o fuera de lo alcanzable en el plazo, o stop dentro del ruido de un día | No operar |
 | Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell o si la entrada aún no se activa |
-| Niveles | Los del gerente de cartera mandan sobre los del trader. Un nivel escrito de forma que no se puede leer como precio | Reservas |
+| Niveles | El gerente de cartera manda solo con las tres líneas `Entry`, `Stop` e `Invalidation` al final de la tesis; si no, valen las del trader, sin mezclar. Otro nivel rotulado en la decisión, o un cambio frente al trader, deja reservas. Un nivel escrito de forma que no se puede leer como precio | Reservas |
 | Plan (solo swing) | El trader propuso no operar | Reservas |
 | Plan condicional (solo swing) | Hold con entrada, stop y objetivo coherentes: hoy no se abre, pero el plan pasa todos los controles de swing | Reservas, o lo que digan esos controles |
 | Plan (solo swing) | Hold con niveles sueltos que no forman un plan | Reservas |

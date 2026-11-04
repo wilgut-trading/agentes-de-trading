@@ -19,7 +19,7 @@ NO_OPERAR, RESERVAS, SIN_OBJECIONES = "NO OPERAR", "CON RESERVAS", "SIN OBJECION
 _ORDEN = {SIN_OBJECIONES: 0, RESERVAS: 1, NO_OPERAR: 2}
 SENTIDO = {"Buy": 1, "Overweight": 1, "Hold": 0, "Underweight": -1, "Sell": -1}
 MIN_HISTORIAL = 30
-SEPARACION_RESULTADOS = 60
+SEPARACION_RESULTADOS = 45
 INFORMES = {"market": "market_report", "social": "sentiment_report", "news": "news_report",
             "fundamentals": "fundamentals_report"}
 
@@ -41,20 +41,27 @@ def precio_referencia(ticker: str, fecha: str) -> dict:
 def proximos_resultados(ticker: str, fecha: str, dias: int = 10) -> str | None:
     """Fecha de resultados dentro de la ventana de la operacion, o None. Lanza si no se sabe."""
     import yfinance as yf
-    fechas = (yf.Ticker(normalize_symbol(ticker)).calendar or {}).get("Earnings Date") or []
+    empresa = yf.Ticker(normalize_symbol(ticker))
+    fechas = (empresa.calendar or {}).get("Earnings Date") or []
     if not fechas:
         raise LookupError("sin fecha de resultados")
     inicio = date.fromisoformat(fecha)
     if all(f < inicio for f in fechas):
-        # Entre trimestres pasan unos 90 dias: quien acaba de presentar no vuelve dentro de la
-        # ventana, aunque aun no haya anunciado la fecha. Si la ultima es vieja, no se sabe.
-        if max(fechas) + timedelta(days=SEPARACION_RESULTADOS) > inicio + timedelta(days=dias):
+        # Una fecha pasada puede ser una estimacion vencida. Solo si consta que presento, y hace
+        # poco, la siguiente queda fuera de la ventana aunque aun no se haya anunciado.
+        ultima = max(fechas)
+        if ultima + timedelta(days=SEPARACION_RESULTADOS) > inicio + timedelta(days=dias) and ultima in _presentados(empresa):
             return None
         raise LookupError("sin fecha futura de resultados")
     for f in fechas:
         if inicio <= f <= inicio + timedelta(days=dias):
             return f.isoformat()
     return None
+
+
+def _presentados(empresa) -> set:
+    tabla = empresa.get_earnings_dates(limit=8)
+    return {dia.date() for dia, eps in tabla["Reported EPS"].items() if eps == eps}   # NaN != NaN: aun sin presentar
 
 
 ETIQUETAS = {"entrada": r"Entry Price|Entry|Precio de entrada|Entrada", "stop": r"Stop[ -]?Loss|Stop de p[ée]rdidas?|Stop",
@@ -89,18 +96,30 @@ def _nivel(texto: str, cual: str) -> float | None:
     return numero if math.isfinite(numero) else None
 
 
-# El modelo puede escribir `Entry: 66.90. Stop: 64.02.` en una sola linea de la tesis.
-_NIVEL_EN_FRASE = re.compile(rf"([.;:])\**[ \t]+(?=\**(?:{ETIQUETAS['entrada']}|{ETIQUETAS['stop']}|Invalidation|Invalidaci[oó]n)[ \t*_]*:)", re.I)
+_ROTULO = r"[>*_\- \t]*(?:{})[ \t*_]*:[ \t*_]*"
+_FIN_NIVEL = r"[.;]?[ \t*_]*(?:\n+|[ \t]+)"
+# Las tres lineas que pide el mandato, en orden y justo al final de la tesis. Un nivel suelto en el
+# razonamiento, una cita o una noticia no es el plan del gerente, aunque lleve el rotulo.
+_BLOQUE = re.compile(r"(?:\*\*Investment Thesis\*\*:[ \t]*|\n|[.!?][ \t]+)" + _ROTULO.format(ETIQUETAS["entrada"]) + rf"({_NUMERO.pattern}){_FIN_NIVEL}"
+                     + _ROTULO.format(ETIQUETAS["stop"]) + rf"({_NUMERO.pattern}){_FIN_NIVEL}" + _ROTULO.format(r"Invalidation|Invalidaci[oó]n") + r"[^\n]+\s*\Z", re.I)
+_OBJETIVO_FINAL = "**Price Target**"
 
 
-def _decision(estado) -> str:
-    return _NIVEL_EN_FRASE.sub(r"\1\n", estado.get("final_trade_decision") or "")
+def _bloque(decision) -> tuple | None:
+    """(entrada, stop) del gerente de cartera, siempre como par: nunca se mezclan con los del trader."""
+    corte = (decision or "").rfind(_OBJETIVO_FINAL)
+    m = _BLOQUE.search(decision[:corte]) if corte >= 0 else None
+    return (float(m.group(1)), float(m.group(2))) if m else None
 
 
 def _niveles(estado) -> tuple:
-    """El gerente de cartera decide al final: sus niveles mandan sobre los del trader."""
-    trader, decision = estado.get("trader_investment_plan") or "", _decision(estado)
-    return tuple(next((n for n in (_nivel(decision, cual), _nivel(trader, cual)) if n is not None), None) for cual in ("entrada", "stop"))
+    """El gerente de cartera decide al final: su par manda sobre el del trader."""
+    trader = estado.get("trader_investment_plan") or ""
+    return _bloque(estado.get("final_trade_decision")) or (_nivel(trader, "entrada"), _nivel(trader, "stop"))
+
+
+def _declarados(decision, cual) -> set:
+    return {float(v) for v in re.findall(rf"(?:{ETIQUETAS[cual]})[ \t*_]*:[ \t*_]*({_NUMERO.pattern})(?![0-9,])", decision or "", re.I)}
 
 
 def _ilegible(texto: str, cual: str) -> bool:
@@ -181,10 +200,10 @@ def _relacion(base, stop, objetivo):
     return round(abs(objetivo - base) / abs(base - stop), 9)   # 2,5 exacto no debe fallar por decimales binarios
 
 
-def plan_de(estado, referencia, rr_minimo=2.5, rating=None) -> dict:
+def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     """Los niveles que el dueno va a operar y su relacion riesgo/beneficio, desde la entrada y desde
     el ultimo precio: una entrada lejana puede aparentar una relacion que hoy no existe."""
-    decision = _decision(estado)
+    decision = estado.get("final_trade_decision")
     entrada, stop = _niveles(estado)
     objetivo = _nivel(decision, "objetivo")
     cierre = (referencia or {}).get("cierre")
@@ -193,13 +212,14 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None) -> dict:
     # Con la relacion calculada, objetivo y stop quedan a lados opuestos de la base.
     direccion = (1 if objetivo > base else -1) if rr is not None else None
     horizonte = _lineas(r"Time Horizon|Horizonte|Plazo", decision)
+    a_favor = direccion is not None and SENTIDO.get(rating, 0) * direccion >= 0
     return {"entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
             "rr_precio": _relacion(cierre, stop, objetivo), "horizonte": horizonte[-1].strip() if horizonte else None,
             "invalidez": invalidez_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,
             # Hold dice que hoy no se abre; con los tres niveles queda una operacion que podria abrirse.
-            "condicional": rating == "Hold" and entrada is not None and direccion is not None,
+            "condicional": swing and rating == "Hold" and entrada is not None and direccion is not None,
             "pendiente": None not in (entrada, cierre, direccion) and (entrada - cierre) * direccion > 0,
-            "entrada_limite": round((objetivo + rr_minimo * stop) / (1 + rr_minimo), 9) if direccion is not None else None}
+            "entrada_limite": round((objetivo + rr_minimo * stop) / (1 + rr_minimo), 9) if a_favor else None}
 
 
 _INVALIDEZ = re.compile(r"(?:^|[.!?;:]\**[ \t]+)[>*_#\- \t]*(?:Invalidation|Invalidaci[oó]n)[ \t*_]*[:=\u2013\u2014][ \t*_]*([^\n]+)", re.I | re.M)
@@ -300,13 +320,20 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
 
     sentido = SENTIDO.get(rating, 0)
     plan = estado.get("trader_investment_plan") or ""
-    decision = _decision(estado)
+    decision = estado.get("final_trade_decision")
     for texto, cual, nombre in ((plan, "entrada", "la entrada"), (plan, "stop", "el stop"), (decision, "entrada", "la entrada"),
                                 (decision, "stop", "el stop"), (decision, "objetivo", "el objetivo")):
         if _ilegible(texto, cual):
             _reservas(c, "Niveles", RESERVAS, f"No se pudo leer {nombre} como un precio: {_ultimo(ETIQUETAS[cual], texto).strip(' *_')[:60]}")
     entrada, stop = _niveles(estado)
     objetivo = _nivel(decision, "objetivo")
+    bloque = _bloque(decision)
+    for cual, valor, nombre in (("entrada", entrada, "entrada"), ("stop", stop, "stop")):
+        if (bloque is None and _declarados(decision, cual)) or _declarados(decision, cual) - {valor}:
+            _reservas(c, "Niveles", RESERVAS, f"La decisión menciona otro nivel de {nombre} fuera del plan: se usó {_p(valor) if valor is not None else 'ninguno'}.")
+    propios = _nivel(plan, "entrada"), _nivel(plan, "stop")
+    if bloque and None not in propios and bloque != propios:
+        _reservas(c, "Niveles", RESERVAS, f"El gerente cambió los niveles del trader ({_p(propios[0])} y {_p(propios[1])}) por {_p(bloque[0])} y {_p(bloque[1])}: la relación mostrada es la suya.")
     if referencia:
         margen = max(referencia["cierre"] * 0.25, 5 * referencia["rango_medio"])
         for nombre, nivel in (("entrada", entrada), ("stop", stop)):
@@ -332,6 +359,9 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
             lado = "comprar" if niveles["direccion"] > 0 else "vender"
             _reservas(c, "Plan condicional", RESERVAS, f"La decisión es Hold: hoy no se abre. Solo plantea {lado} si se activa la entrada en {_p(entrada)}.")
             _controles_swing(c, niveles, rr_minimo, referencia, niveles["direccion"], None)
+            for nombre, otro in (("gerente de investigación", _rating_en(estado.get("investment_plan"))), ("trader", _accion(plan))):
+                if otro and otro != niveles["direccion"]:
+                    _reservas(c, "Coherencia", RESERVAS, f"El {nombre} recomendó el sentido contrario al plan condicional.")
         elif rating == "Hold" and (entrada is not None or stop is not None or niveles["invalidez"]):
             _reservas(c, "Plan", RESERVAS, "Hold con niveles que no forman un plan completo (entrada, stop y objetivo coherentes): no los operes.")
 
@@ -415,7 +445,9 @@ def citas_validas(objeciones, decision: list[str], evidencia: list[str]) -> list
     for o in objeciones:
         sin_cita = o.linea_evidencia is None
         if 1 <= o.linea_decision <= len(decision) and (sin_cita or 1 <= o.linea_evidencia <= len(evidencia)):
-            validas.append((o, decision[o.linea_decision - 1], None if sin_cita else evidencia[o.linea_evidencia - 1]))
+            cita = None if sin_cita else evidencia[o.linea_evidencia - 1]
+            # Una linea sin contenido, como el separador de una tabla, no prueba nada.
+            validas.append((o, decision[o.linea_decision - 1], cita if cita and len(re.sub(r"\W", "", cita)) >= 12 else None))
     return validas
 
 
@@ -436,12 +468,12 @@ def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, r
     resumen = {"objeciones": [], "descartadas": len(objeciones) - len(validas)}
     if not validas:
         return resumen
-    lista = "\n".join(f"{i}. Decisión: «{_dato(d)}» " + (f"Evidencia: «{_dato(e)}»" if e else "Sin respaldo en la evidencia.") + f" Objeción: {o.objecion}"
+    lista = "\n".join(f"{i}. Decisión: «{_dato(d)}» " + (f"Evidencia: «{_dato(e)}»" if e else "Sin respaldo en la evidencia.") + f" Objeción: {_dato(o.objecion)}"
                       for i, (o, d, e) in enumerate(validas, 1))
     defensa = llm_rapido.with_structured_output(Defensor).invoke(
         f"Eres defensor de la decisión. Responde cada objeción con la evidencia. {_SEGURIDAD}\n{caso}\n"
         f"<objeciones>\n{lista}\n</objeciones>")
-    replicas = "\n".join(f"{r.numero}. {r.respuesta}" for r in defensa.replicas)
+    replicas = "\n".join(f"{r.numero}. {_dato(r.respuesta)}" for r in defensa.replicas)
     sentencia = llm_profundo.with_structured_output(Sentencia).invoke(
         "Eres árbitro imparcial. Falla cada objeción: sostenida o no, y si es grave (invalida la "
         f"operación) o leve. Sostén solo lo que la evidencia respalda. {_SEGURIDAD}\n{caso}\n"
@@ -492,5 +524,5 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
         if o["sostenida"]:
             _reservas(controles, "Debate", NO_OPERAR if o["gravedad"] == "grave" else RESERVAS, o["objecion"])
     veredicto = max((c["resultado"] for c in controles), key=_ORDEN.get, default=SIN_OBJECIONES)
-    return {"veredicto": veredicto, "controles": controles, "referencia": referencia, "plan": plan_de(estado, referencia, rr_minimo, rating), "objetivo": objetivo_analisis,
+    return {"veredicto": veredicto, "controles": controles, "referencia": referencia, "plan": plan_de(estado, referencia, rr_minimo, rating, objetivo_analisis == "swing"), "objetivo": objetivo_analisis,
             "debate": adversarial, "medicion": medicion}
