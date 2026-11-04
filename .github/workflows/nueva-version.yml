@@ -123,6 +123,11 @@ jobs:
     if: needs.probar.outputs.contrato == 'ok' && vars.GCP_PROYECTO != ''
     runs-on: ubuntu-latest
     environment: vista-previa   # con revisor obligatorio: no corre hasta que lo apruebes
+    env:
+      PROFUNDO: ${{ vars.MODELO_PROFUNDO }}
+      RAPIDO: ${{ vars.MODELO_RAPIDO }}
+      IDIOMA: ${{ vars.IDIOMA_INFORMES }}
+      ANALISTAS: ${{ vars.AGENTES_ANALISTAS }}
     permissions: {contents: read, id-token: write, pull-requests: write}
     steps:
       - uses: actions/checkout@v4
