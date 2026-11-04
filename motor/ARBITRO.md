@@ -56,7 +56,7 @@ Controles deterministas (código, sin modelo):
 | Plan (solo swing) | Falta entrada, objetivo, condición de invalidez o plazo cerrado en sesiones, o el plazo supera 20 sesiones | Reservas |
 | Plan (solo swing) | Objetivo no válido o fuera de lo alcanzable en el plazo, o stop dentro del ruido de un día | No operar |
 | Niveles (solo swing) | El último precio ya rebasó el stop | No operar en Buy u Overweight; reservas en Underweight o Sell o si la entrada aún no se activa |
-| Niveles | El gerente de cartera manda solo con las tres líneas `Entry`, `Stop` e `Invalidation` al final de la tesis; si no, valen las del trader, sin mezclar. Otro nivel rotulado en la decisión, o un cambio frente al trader, deja reservas. Un nivel escrito de forma que no se puede leer como precio | Reservas |
+| Niveles | El gerente de cartera manda solo con las tres líneas `Entry`, `Stop` e `Invalidation` al final de la tesis; si no, valen las del trader, sin mezclar. Otro nivel rotulado en la decisión, o un cambio frente al trader, deja reservas; si con los niveles del trader la relación no llegaba a tu mínimo, no operar. Un nivel escrito de forma que no se puede leer como precio | Reservas |
 | Plan (solo swing) | El trader propuso no operar | Reservas |
 | Plan condicional (solo swing) | Hold con entrada, stop y objetivo coherentes: hoy no se abre, pero el plan pasa todos los controles de swing | Reservas, o lo que digan esos controles |
 | Plan (solo swing) | Hold con niveles sueltos que no forman un plan | Reservas |
@@ -69,7 +69,8 @@ Debate adversarial (con el modelo):
    objeta y la línea de la evidencia que la contradice, o ninguna si lo que falta es respaldo.
 2. **Verificación de citas (código):** el texto citado sale del original por su número, así que
    no se puede inventar ni copiar mal. Se descarta la objeción que apunte a una línea inexistente;
-   el descarte deja la decisión en reservas, porque tampoco se puede dar por refutada.
+   el descarte deja la decisión en reservas, porque tampoco se puede dar por refutada. Si la línea
+   citada viene al caso lo juzga el modelo, no el código: el riesgo es una falsa alarma, no un pase.
 3. **Defensor:** responde cada objeción que sobrevivió, también con citas.
 4. **Árbitro (modelo profundo):** falla cada objeción: sostenida o rechazada, grave o leve.
 

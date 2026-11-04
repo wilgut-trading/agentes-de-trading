@@ -5,3 +5,4 @@ python-multipart==0.0.33
 firebase-admin==7.7.0
 google-cloud-storage==3.17.1
 google-cloud-run==0.16.2
+lxml==6.1.3

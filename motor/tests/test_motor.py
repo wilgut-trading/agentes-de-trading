@@ -1136,7 +1136,7 @@ def test_h10_buy_con_niveles_del_gerente_usa_esos_en_los_controles():
 
 def test_h11_el_mandato_pide_los_niveles_tambien_en_hold():
     m = ob.mandato("swing", 2.5)
-    assert "`Entry: <price>`" in m and "`Stop: <price>`" in m and "Hold" in m
+    assert "Entry: <price>\nStop: <price>\nInvalidation" in m and "Hold" in m
 
 
 @pytest.mark.parametrize("fechas,hoy,dias,esperado", [
@@ -1252,3 +1252,72 @@ def test_a9_el_texto_del_modelo_no_cierra_los_delimitadores():
     ar.debate(Modelo(ar.Fiscal(objeciones=[ar.Objecion(linea_decision=1, objecion=malo)]), ar.Defensor(replicas=[ar.Replica(numero=1, respuesta=malo)])), juez,
               {"final_trade_decision": "**Rating**: Buy", "market_report": "texto"}, "NVDA", "2026-11-03", "Buy", ["market"], {})
     assert juez.vistos[0].count("</objeciones>") == 1 and juez.vistos[0].count("</replicas>") == 1 and juez.vistos[0].count("<replicas>") == 1
+
+
+@pytest.mark.parametrize("linea", ["| EPS | -0.50 |", "RSI: 28.4", "ROE 3%"])
+def test_b1_evidencia_corta_sigue_siendo_evidencia(linea):
+    o = ar.Objecion(linea_decision=1, linea_evidencia=1, objecion="No cuadra.")
+    r = ar.debate(Modelo(ar.Fiscal(objeciones=[o]), ar.Defensor()), Modelo(ar.Sentencia(fallos=[ar.Fallo(numero=1, sostenida=True, gravedad="grave", razon="a")])),
+                  {"final_trade_decision": "**Rating**: Buy", "market_report": linea}, "NVDA", "2026-11-03", "Buy", ["market"], {})
+    assert r["objeciones"][0]["evidencia"] == linea and r["objeciones"][0]["gravedad"] == "grave"
+
+
+def test_b2_espacios_no_cuelgan_el_motor():
+    import time
+    estado = _caso("Sube.\nEntry: 100" + " " * 16000 + "pending.\nInvalidation: close below 90")
+    inicio = time.monotonic()
+    _swing_hold(estado, REF_CIEN, "Buy")
+    assert time.monotonic() - inicio < 2
+
+
+def test_b3_cambio_de_un_solo_nivel_del_trader_se_avisa():
+    controles, _ = _swing_hold(_caso("Sube.\nEntry: 100\nStop: 97\nInvalidation: close below 97", entrada="120", stop="not provided"), REF_CIEN, "Buy")
+    assert ("Niveles", ar.RESERVAS) in controles
+
+
+def test_b4_invalidez_es_la_del_plan_y_cuadra_con_la_direccion():
+    controles, plan = _swing_hold(_caso("Old. Invalidation: close above 50\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")
+    assert plan["invalidez"] == "close below 96" and ("Plan", ar.RESERVAS) not in controles
+    controles, _ = _swing_hold(_caso("Sube.\nInvalidation: close above 96", stop="96", objetivo="115"), REF_CIEN, "Buy")
+    assert ("Plan", ar.RESERVAS) in controles
+
+
+@pytest.mark.parametrize("entrada,stop", [("100", "90"), ("500", "90")])
+def test_b5_el_gerente_no_rescata_lo_que_salia_mal_con_el_trader(entrada, stop):
+    controles, _ = _swing_hold(_caso("Sube.\nEntry: 100\nStop: 97\nInvalidation: close below 97", entrada=entrada, stop=stop), REF_CIEN, "Buy")
+    assert any(r == ar.NO_OPERAR for _, r in controles)
+
+
+@pytest.mark.parametrize("bloque", ["`Entry: 66.90`\n`Stop: 64.02`\n`Invalidation: close below 64.02`",
+                                    "Entry: 66.90\r\nStop: 64.02\r\nInvalidation: close below 64.02",
+                                    "Entry: 66.90\n   \nStop: 64.02\n\nInvalidation: close below 64.02",
+                                    "**Entry**: 66.90\n**Stop Loss**: 64.02\n**Invalidation**: close below 64.02"])
+def test_b6_formas_que_el_modelo_escribiria(bloque):
+    _, plan = _swing_hold(_hold("Esperar.\n" + bloque))
+    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02) and plan["condicional"] and plan["invalidez"] == "close below 64.02"
+
+
+@pytest.mark.parametrize("prosa", ["Trailing stop: 5%", "Re-entry: 3", "Non-stop: 24", "Entry: 2026-11-10"])
+def test_b7_no_son_niveles(prosa):
+    assert not _swing_hold(_caso(f"Sube. {prosa}.\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+
+
+@pytest.mark.parametrize("prosa", ["Stop = 80", "Stop \u2014 97", "Stop: $97"])
+def test_b8_otros_separadores_si_son_niveles(prosa):
+    assert ("Niveles", ar.RESERVAS) in _swing_hold(_caso(f"Sube. {prosa} hoy.\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+
+
+def test_b9_la_cola_libre_y_numeros_infinitos_no_son_plan():
+    estado = _estado(trader_investment_plan="**Action**: Buy\n\n**Entry Price**: not provided\n\n**Stop Loss**: not provided",
+                     final_trade_decision="**Rating**: Buy\n\n**Investment Thesis**: Sube.\n\n**Price Target**: 110\n\n**Time Horizon**: 10 sessions\nEntry: 100\nStop: 97\nInvalidation: close below 97\n**Price Target**: 110")
+    assert ar._bloque(estado["final_trade_decision"]) is None
+    assert ar._bloque("**Investment Thesis**: Entry: 1e999\nStop: 97\nInvalidation: close below 97\n\n**Price Target**: 110") is None
+
+
+def test_b10_presentados_ignora_lo_que_no_es_numero():
+    import pandas as pd
+
+    class E:
+        def get_earnings_dates(self, limit=8):
+            return pd.DataFrame({"Reported EPS": ["-", None, 1.5]}, index=pd.to_datetime(["2026-10-28", "2026-07-28", "2026-04-28"]))
+    assert ar._presentados(E()) == {date(2026, 4, 28)}
