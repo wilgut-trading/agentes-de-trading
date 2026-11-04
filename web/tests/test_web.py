@@ -237,3 +237,8 @@ def test_d_objecion_sin_respaldo_se_dice_asi(dentro, tienda):
 def test_h_hold_sin_operacion_lo_dice(dentro, tienda):
     pagina = _plan_pagina(dentro, tienda, {"entrada": None, "stop": None, "objetivo": None, "rr": None, "rr_precio": None, "horizonte": "10 sessions", "invalidez": None})
     assert "Sin operación" in pagina and "<th>Entrada</th>" not in pagina
+
+
+def test_h_hold_con_invalidez_muestra_la_tabla(dentro, tienda):
+    pagina = _plan_pagina(dentro, tienda, {"entrada": None, "stop": None, "objetivo": None, "rr": None, "rr_precio": None, "horizonte": "10 sessions", "invalidez": "close below 64.02"})
+    assert "Sin operación" not in pagina and "close below 64.02" in pagina

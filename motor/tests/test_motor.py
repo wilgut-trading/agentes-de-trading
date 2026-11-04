@@ -1409,3 +1409,10 @@ def test_f2_el_debate_sabe_si_el_precio_aun_no_es_un_cierre():
     ar.arbitrar(_estado(), "NFLX", "2026-11-03", "Hold", ["market", "news"], fiscal, Modelo(), MEDIDO, vivo=True, precio=lambda *a: {**REF, "fecha": "2026-11-03"},
                 eventos=lambda *a: None, reloj=datetime(2026, 11, 3, 15, 44))
     assert "con el mercado abierto" in fiscal.vistos[0]
+
+
+@pytest.mark.parametrize("ticker", ["BTC-USD", "CL=F"])
+def test_f3_cripto_y_futuros_no_tienen_cierre_que_afirmar(ticker):
+    fiscal = Grabadora(ar.Fiscal(objeciones=[]))
+    ar.debate(fiscal, Modelo(), _estado(), ticker, "2026-11-03", "Hold", ["market"], {"cierre": 100, "fecha": "2026-11-03"})
+    assert "E1: Último precio independiente: 100" in fiscal.vistos[0]

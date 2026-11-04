@@ -507,7 +507,10 @@ def citas_validas(objeciones, decision: list[str], evidencia: list[str]) -> list
 def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis="swing", sin_cierre=False) -> dict:
     decision = _renglones(estado.get("final_trade_decision"))
     # Si aun no es un cierre, el fiscal no puede tomar la diferencia con el ultimo cierre por un error.
-    rotulo = "Último precio independiente, con el mercado abierto y aún sin cerrar" if sin_cierre else "Último cierre independiente"
+    # Cripto y futuros cotizan casi sin pausa: su ultimo precio tampoco se puede llamar cierre.
+    continuo = bool(crypto_base(ticker)) or "=F" in normalize_symbol(ticker)
+    rotulo = ("Último precio independiente, con el mercado abierto y aún sin cerrar" if sin_cierre
+              else "Último precio independiente" if continuo else "Último cierre independiente")
     ref = f"{rotulo}: {referencia.get('cierre')} ({referencia.get('fecha')})." if referencia else ""
     evidencia = _renglones("\n".join([ref] + [estado.get(INFORMES[a]) or "" for a in analistas] + [estado.get("trader_investment_plan") or ""]))
     meta = "swing de 1 a 20 sesiones" if objetivo_analisis == "swing" else "inversión de meses a años"
