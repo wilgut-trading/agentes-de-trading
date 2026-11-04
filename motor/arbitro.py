@@ -176,7 +176,8 @@ def plan_de(estado, referencia) -> dict:
 
 
 _INVALIDEZ = re.compile(r"(?:^|[.!?;:]\**[ \t]+)[>*_#\- \t]*(?:Invalidation|Invalidaci[oó]n)[ \t*_]*[:=\u2013\u2014][ \t*_]*([^\n]+)", re.I | re.M)
-_SIN_CONDICION = re.compile(r"(?:^|\W)(?:no|not|none|n/?a|ningun\w*|sin|tbd|por definir|to be|pendiente)(?:\W|$)", re.I)
+# Solo al principio: "cierra bajo 94 sin recuperar" es una condicion normal.
+_SIN_CONDICION = re.compile(r"^\W*(?:no|not|none|n/?a|ning[uú]n\w*|sin|tbd|por definir|to be|pendiente)(?:\W|$)", re.I)
 _PLAZO = re.compile(r"([0-9]{1,3})(?:\s*(?:-|\u2013|a|to)\s*([0-9]{1,3}))?\s+(?:trading\s+)?(?:sessions?|sesi[oó]n(?:es)?)", re.I)
 
 
@@ -189,7 +190,7 @@ def invalidez_de(texto) -> str | None:
 
 def sesiones_de(horizonte) -> int | None:
     """Solo la forma que pide el mandato, `10 sessions` o `5-15 sesiones`: el tope, o None."""
-    m = _PLAZO.fullmatch((horizonte or "").strip(" .*_"))
+    m = _PLAZO.fullmatch((horizonte or "").strip(" .*_`"))
     if not m:
         return None
     uno, dos = int(m.group(1)), int(m.group(2) or m.group(1))

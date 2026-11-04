@@ -1002,3 +1002,9 @@ def test_o2_decision_real_limpia_llega_a_sin_objeciones():
         j = ar.arbitrar(estado, "NVDA", "2026-11-03", rating, ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
                         precio=lambda *a: {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}, eventos=lambda *a: None, reloj=_noche(), objetivo_analisis="swing", rr_minimo=2.5)
         assert j["veredicto"] == ar.SIN_OBJECIONES, (rating, j["controles"])
+
+
+def test_o3_condiciones_y_plazos_normales_se_aceptan():
+    assert ar.invalidez_de("Invalidación: si cierra por debajo de 94 sin recuperar") is not None
+    assert ar.invalidez_de("Invalidación: ningún cierre en 20 sesiones") is None
+    assert ar.sesiones_de("`10 sessions`") == 10
