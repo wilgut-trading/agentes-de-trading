@@ -1430,10 +1430,10 @@ def test_g1_consumo_cuenta_llamadas_y_suma_sobre_lo_previo():
     from langchain_core.messages import HumanMessage
     from motor.consumo import Consumo
     from motor.simulado import Falso
-    c = Consumo({"llamadas": 5, "herramientas": 1, "por_modelo": {"modelo": 5}})
+    c = Consumo({"llamadas": 5, "por_modelo": {"modelo": 5}})
     Falso(callbacks=[c]).invoke([HumanMessage(content="hola")])
     r = c.resumen()
-    assert r["llamadas"] == 6 and r["herramientas"] == 1 and sum(r["por_modelo"].values()) == 6
+    assert r["llamadas"] == 6 and sum(r["por_modelo"].values()) == 6
 
 
 def test_g2_base_con_tendencia_alcista_llega_al_objetivo():
@@ -1512,7 +1512,7 @@ CIEN = {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}
     (None, "x", {("Datos", ar.RESERVAS)}),
     (("2026-11-03", 100.0), "El cierre aportado de 105.54 supera la media.", {("Datos", ar.RESERVAS)}),
     (("2026-11-03", 100.0), "El último cierre fue 100,39.", set()),
-    (("2026-11-03", 100.0), "Latest close: 1,266.90 today", {("Datos", ar.RESERVAS)}),
+    (("2026-11-03", 100.0), "Latest close: 110.50 today", {("Datos", ar.RESERVAS)}),
 ])
 def test_g9_contraste_de_precios(visto, decision, esperado):
     c = []
@@ -1543,8 +1543,52 @@ def test_g12_el_precio_equivocado_de_los_agentes_tumba_la_decision():
 def test_g13_precio_visto_lee_los_datos_de_los_agentes(tmp_path):
     (tmp_path / "NFLX-YFin-data.csv").write_text("Date,Open,High,Low,Close,Volume\n2026-11-03,1,1,1,63.42,1\n2026-11-04 00:00:00-05:00,1,1,1,66.39,1\n")
     config = {"data_cache_dir": str(tmp_path)}
-    assert run._precio_visto(config, "NFLX", "2026-11-04") == ("2026-11-04", 66.39)
-    assert run._precio_visto(config, "NFLX", "2026-11-03") == ("2026-11-03", 63.42)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    def con_hora(hora):
+        os.utime(tmp_path / "NFLX-YFin-data.csv", (m := datetime.fromisoformat(hora).replace(tzinfo=ZoneInfo("America/New_York")).timestamp(), m))
+    con_hora("2026-11-04T15:50:00")
+    assert run._precio_visto(config, "NFLX", "2026-11-04") == ("2026-11-04", 66.39, False)
+    con_hora("2026-11-04T16:25:00")
+    assert run._precio_visto(config, "NFLX", "2026-11-04") == ("2026-11-04", 66.39, True)
+    assert run._precio_visto(config, "NFLX", "2026-11-03")[:2] == ("2026-11-03", 63.42)
     assert run._precio_visto(config, "GOOGL", "2026-11-04") is None
     (tmp_path / "AMD-YFin-data.csv").write_text("basura")
     assert run._precio_visto(config, "AMD", "2026-11-04") is None
+
+
+@pytest.mark.parametrize("visto,sin_cierre,continuo", [
+    (("2026-11-03", 102.0, False), False, False),   # lanzado 15:40, arbitro 16:10
+    (("2026-11-03", 102.0, True), True, False),     # mercado abierto
+    (("2026-11-02", 100.0, False), False, False),   # lanzado antes de abrir
+    (("2026-11-03", 102.0, True), False, True),     # cripto: nunca cierra
+])
+def test_g14_que_el_precio_se_mueva_durante_el_analisis_no_es_un_error_de_datos(visto, sin_cierre, continuo):
+    c = []
+    ar.contrastar_precios(c, CIEN, visto, "x", sin_cierre, continuo)
+    assert {(x["control"], x["resultado"]) for x in c} == {("Datos", ar.RESERVAS)} and "pudo moverse" in c[0]["detalle"]
+
+
+@pytest.mark.parametrize("texto", ["last close on 2026-11-03 was 100", "Último cierre del 3 de noviembre: 100", "latest close (11/03) at 100"])
+def test_g15_una_fecha_no_es_un_precio(texto):
+    c = []
+    ar.contrastar_precios(c, CIEN, ("2026-11-03", 100.0, True), texto, False)
+    assert not c
+
+
+def test_g16_precio_europeo():
+    assert ar._a_numero("1.234,56") == 1234.56 and ar._a_numero("66,39") == 66.39 and ar._a_numero("1,266.90") == 1266.9
+
+
+@pytest.mark.parametrize("cambio", [{"Open": 0}, {"Low": 0}, {"Close": 10.0}])
+def test_g17_datos_rotos_no_dan_base(cambio):
+    from motor.base_historica import calcular
+    tabla = _tabla([100.0] * 600)
+    for columna, valor in cambio.items():
+        tabla.loc[300, columna] = valor
+    assert calcular(tabla, 100, 98, 105, 10) is None
+
+
+def test_g18_plazo_enorme_no_da_base():
+    from motor.base_historica import calcular
+    assert calcular(_tabla([100.0] * 1300), 100, 98, 105, 500) is None

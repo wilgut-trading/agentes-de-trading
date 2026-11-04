@@ -266,6 +266,9 @@ def _analizar(tienda, t, carpeta, simulado):
 
 def _precio_visto(config, ticker, fecha) -> tuple | None:
     """La ultima fila hasta esa fecha de los precios que recibieron los agentes."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     import pandas as pd
     from tradingagents.dataflows.symbols import normalize_symbol, safe_ticker_component
     ruta = Path(config["data_cache_dir"]) / f"{safe_ticker_component(normalize_symbol(ticker))}-YFin-data.csv"
@@ -273,7 +276,9 @@ def _precio_visto(config, ticker, fecha) -> tuple | None:
         filas = pd.read_csv(ruta, usecols=["Date", "Close"]).dropna()
         filas["Date"] = filas["Date"].astype(str).str[:10]
         ultima = filas[filas["Date"] <= fecha].iloc[-1]
-        return ultima["Date"], float(ultima["Close"])
+        # Yahoo publica el cierre unos minutos despues de las 16:00 de Nueva York.
+        escrito = datetime.fromtimestamp(ruta.stat().st_mtime, ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M")
+        return ultima["Date"], float(ultima["Close"]), escrito >= f"{fecha} 16:20"
     except (OSError, ValueError, KeyError, IndexError):
         return None
 

@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from motor.arbitro import wilson
 from tradingagents.dataflows.symbols import normalize_symbol
 
-ANOS, VENTANA_VOLATILIDAD, MIN_VENTANAS = 5, 14, 250
+ANOS, VENTANA_VOLATILIDAD, MIN_VENTANAS, MIN_INDEPENDIENTES = 5, 14, 250, 20
 
 
 def _tabla(ticker: str, fecha: str):
@@ -27,7 +27,10 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
     if sin_cierre:
         tabla = tabla.iloc[:-1]
     o, h, l, c = (tabla[k].to_numpy() for k in ("Open", "High", "Low", "Close"))
-    if len(c) < MIN_VENTANAS + sesiones + VENTANA_VOLATILIDAD or (c <= 0).any():
+    if len(c) < MIN_VENTANAS + sesiones + VENTANA_VOLATILIDAD or (tabla[["Open", "High", "Low", "Close"]] <= 0).any(axis=None):
+        return None
+    saltos = c[1:] / c[:-1]
+    if (saltos > 3).any() or (saltos < 1 / 3).any():   # un split sin ajustar o un dato roto, no un movimiento
         return None
     rangos = (tabla["High"] - tabla["Low"]) / tabla["Close"]
     volatilidad = rangos.rolling(VENTANA_VOLATILIDAD).mean().to_numpy()
@@ -61,6 +64,8 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
         return None
     # Las ventanas se solapan: la incertidumbre se mide con las que serian independientes.
     independientes = ventanas // sesiones
+    if independientes < MIN_INDEPENDIENTES:
+        return None
     bajo, alto = wilson(round(objetivos / ventanas * independientes), independientes)
     return {"ventanas": ventanas, "independientes": independientes, "sesiones": sesiones, "lado": lado,
             "objetivo": objetivos / ventanas, "stop": stops / ventanas, "ninguno": 1 - (objetivos + stops) / ventanas,

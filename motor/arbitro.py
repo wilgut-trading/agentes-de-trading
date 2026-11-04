@@ -333,30 +333,42 @@ _PRECIO_CITADO = re.compile(r"(?:cierre aportado|cierre de referencia|[uú]ltimo
 
 
 def _a_numero(texto: str) -> float | None:
-    if re.fullmatch(r"[0-9]+,[0-9]{1,2}", texto):   # 66,39
-        texto = texto.replace(",", ".")
+    if re.fullmatch(r"[0-9.]*[0-9],[0-9]{1,2}", texto):   # 66,39 o 1.234,56
+        texto = texto.replace(".", "").replace(",", ".")
     texto = texto.replace(",", "")
     return float(texto) if _NUMERO.fullmatch(texto) else None
 
 
-def contrastar_precios(controles, referencia, visto, decision, sin_cierre) -> None:
-    """Los agentes pueden trabajar con un precio equivocado sin que nada falle. `visto` es la
-    ultima fila de los datos que recibieron: (fecha, cierre), o None si no se pudo leer."""
+def _continuo(ticker) -> bool:
+    """Cripto y futuros cotizan casi sin pausa: su ultimo precio no se puede llamar cierre."""
+    return bool(crypto_base(ticker)) or "=F" in normalize_symbol(ticker)
+
+
+def contrastar_precios(controles, referencia, visto, decision, sin_cierre, continuo=False) -> None:
+    """Los agentes pueden trabajar con un precio equivocado sin que nada falle. `visto` es la ultima
+    fila de los datos que recibieron: (fecha, cierre, firme), o None si no se pudo leer. Firme: se
+    bajo ya con el cierre publicado. Si no, el precio pudo moverse mientras corria el analisis, y
+    eso no es un error de datos, aunque si un motivo para revisar los niveles."""
     if not referencia:
         return
     cierre = referencia["cierre"]
     tolerancia = max(cierre * 0.01, 0.5 * referencia["rango_medio"])
     if visto is None:
         _reservas(controles, "Datos", RESERVAS, "No se pudo comprobar qué precios recibieron los agentes.")
-    elif visto[0] != referencia["fecha"]:
-        _reservas(controles, "Datos", NO_OPERAR, f"Los agentes trabajaron con precios hasta {visto[0]}, y el último es de {referencia['fecha']}.")
-    elif abs(visto[1] - cierre) > tolerancia:
-        _reservas(controles, "Datos", NO_OPERAR, f"Los agentes recibieron {_p(visto[1])} como último precio, y el independiente es {_p(cierre)}.")
+    else:
+        fecha_vista, precio_visto, firme = (*visto, True)[:3]
+        resultado = NO_OPERAR if firme and not sin_cierre and not continuo else RESERVAS
+        causa = "" if resultado == NO_OPERAR else " El precio pudo moverse mientras corría el análisis: revisa los niveles."
+        if fecha_vista != referencia["fecha"]:
+            _reservas(controles, "Datos", resultado, f"Los agentes trabajaron con precios hasta {fecha_vista}, y el último es de {referencia['fecha']}.{causa}")
+        elif abs(precio_visto - cierre) > tolerancia:
+            _reservas(controles, "Datos", resultado, f"Los agentes recibieron {_p(precio_visto)} como último precio, y el independiente es {_p(cierre)}.{causa}")
     if sin_cierre:   # con el mercado abierto, citar el cierre de ayer es correcto
         return
     for texto in _PRECIO_CITADO.findall(decision or ""):
         citado = _a_numero(texto)
-        if citado is not None and abs(citado - cierre) > tolerancia:
+        # Fuera de esta franja es una fecha u otra cifra que siguio al rotulo, no un precio.
+        if citado is not None and 0.2 * cierre < citado < 5 * cierre and abs(citado - cierre) > tolerancia:
             _reservas(controles, "Datos", RESERVAS, f"La decisión cita {_p(citado)} como último precio, y el independiente es {_p(cierre)}.")
             break
 
@@ -540,10 +552,8 @@ def citas_validas(objeciones, decision: list[str], evidencia: list[str]) -> list
 def debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis="swing", sin_cierre=False) -> dict:
     decision = _renglones(estado.get("final_trade_decision"))
     # Si aun no es un cierre, el fiscal no puede tomar la diferencia con el ultimo cierre por un error.
-    # Cripto y futuros cotizan casi sin pausa: su ultimo precio tampoco se puede llamar cierre.
-    continuo = bool(crypto_base(ticker)) or "=F" in normalize_symbol(ticker)
     rotulo = ("Último precio independiente, con el mercado abierto y aún sin cerrar" if sin_cierre
-              else "Último precio independiente" if continuo else "Último cierre independiente")
+              else "Último precio independiente" if _continuo(ticker) else "Último cierre independiente")
     ref = f"{rotulo}: {referencia.get('cierre')} ({referencia.get('fecha')})." if referencia else ""
     evidencia = _renglones("\n".join([ref] + [estado.get(INFORMES[a]) or "" for a in analistas] + [estado.get("trader_investment_plan") or ""]))
     meta = "swing de 1 a 20 sesiones" if objetivo_analisis == "swing" else "inversión de meses a años"
@@ -605,7 +615,7 @@ def arbitrar(estado, ticker, fecha, rating, analistas, llm_rapido, llm_profundo,
     controles = controles_deterministas(estado, ticker, fecha, rating, analistas, referencia, resultados,
                                         fallos_datos, medicion, vivo, reloj, fecha_mercado, objetivo_analisis, rr_minimo, fuentes_caidas) + extra
     if contrastar and vivo:   # en fechas pasadas los precios ajustados no se comparan con los de entonces
-        contrastar_precios(controles, referencia, visto, estado.get("final_trade_decision"), _sin_cierre(ticker, fecha, referencia, vivo, reloj))
+        contrastar_precios(controles, referencia, visto, estado.get("final_trade_decision"), _sin_cierre(ticker, fecha, referencia, vivo, reloj), _continuo(ticker))
     try:
         adversarial = debate(llm_rapido, llm_profundo, estado, ticker, fecha, rating, analistas, referencia, objetivo_analisis,
                              _sin_cierre(ticker, fecha, referencia, vivo, reloj))

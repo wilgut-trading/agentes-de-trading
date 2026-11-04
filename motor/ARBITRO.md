@@ -48,7 +48,7 @@ Controles deterministas (código, sin modelo):
 | Niveles | Sin stop legible, u objetivo al lado contrario. En Underweight o Sell, stop por debajo del precio: vale si reduces una posición larga, no si abres un corto | Reservas |
 | Lectura | Solo cuenta lo escrito en la forma exacta: precios como número limpio, plazo como `10 sesiones`, invalidez con un nivel. Lo demás no se adivina | Reservas |
 | Coherencia | Gerente de investigación, trader y gerente de cartera en sentidos opuestos, o ninguno respalda la dirección | Reservas |
-| Datos | Los precios que recibieron los agentes son de otro día o difieren del independiente en más que el ruido | No operar |
+| Datos | Los precios que recibieron los agentes, bajados ya con el cierre, son de otro día o difieren del independiente en más que el ruido | No operar (si el mercado seguía abierto o es cripto o futuro: reservas) |
 | Datos | No se pudo comprobar qué precios recibieron, o la decisión cita otro último precio | Reservas |
 | Resultados | Hay presentación de resultados dentro de la operación (swing: 28 días; inversión: 10 días), o no se sabe. Una fecha pasada solo descarta la ventana si consta como presentada y es reciente | Reservas |
 | Instrumento | Lo analizado no es lo que escribiste (WTI como petróleo CL=F) | Reservas |
