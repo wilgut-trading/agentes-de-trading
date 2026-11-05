@@ -97,7 +97,7 @@ def _nivel(texto: str, cual: str) -> float | None:
 
 
 _ENTRADA, _STOP, _ROTULO_INVALIDEZ = ETIQUETAS["entrada"], ETIQUETAS["stop"], r"Invalidation|Invalidaci[oó]n"
-_ANTES_DE_ROTULO = re.compile(rf"(?<=[.;]) +(?=(?:{_ENTRADA}|{_STOP}|{_ROTULO_INVALIDEZ}) *:)", re.I)
+_ANTES_DE_ROTULO = re.compile(rf"(?<=[.;]) +(?=(?:{_ENTRADA}|{_STOP}|{_ROTULO_INVALIDEZ}|Entry condition|Condici[oó]n de entrada) *:)", re.I)
 
 
 def _tesis(decision) -> str:
@@ -105,6 +105,27 @@ def _tesis(decision) -> str:
     de estorbar a la lectura harian lentisima una busqueda."""
     texto = re.split(r"^\*\*Time Horizon\*\*:", (decision or "").replace("\r", "\n"), maxsplit=1, flags=re.M)[0]
     return re.sub(r"[ \t\u00a0]+", " ", re.sub(r"[*_`]+", "", texto))
+
+
+_CONDICION = re.compile(r"^ *(?:Investment Thesis: *)?(?:Entry condition|Condici[oó]n de entrada) *: *(.*)$", re.I | re.M)
+_TRAS_CONDICION = re.compile(rf" *(?:{_ENTRADA}|{_STOP}|{_ROTULO_INVALIDEZ}|Price Target) *:", re.I)
+_SIN_CONDICION_DE_ENTRADA = re.compile(r"\W*(?:none|none required|no|no aplica|not applicable|no condition|n/?a|ningun[ao]|ninguna condici[oó]n|sin condici[oó]n)\W*", re.I)
+
+
+def condicion_de(decision) -> str | None:
+    """Lo que debe pasar antes de entrar, de la ultima linea rotulada de la tesis y solo si la siguen
+    los niveles: una cita o un "none" con mas texto debajo no son su plan. "" si el gerente dice que
+    no hay condicion; None si no queda claro: no es lo mismo, y no se adivina."""
+    texto = _ANTES_DE_ROTULO.sub("\n", _tesis(decision))
+    hallados = list(_CONDICION.finditer(texto))
+    if not hallados:
+        return None
+    valor = hallados[-1].group(1).strip()
+    if not valor or not _TRAS_CONDICION.match(texto[hallados[-1].end():].lstrip()):
+        return None
+    if _SIN_CONDICION_DE_ENTRADA.fullmatch(valor):
+        return ""
+    return valor if len(valor) <= 300 else valor[:300] + "…"
 
 
 def _nivel_del_bloque(texto: str) -> float | None:
@@ -244,7 +265,7 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     lado = None if (rating == "Hold" and not condicional) or (rr is not None and min(base, stop, objetivo) <= 0) else direccion
     return {"lado": lado, "entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
             "rr_precio": _relacion(cierre, stop, objetivo), "horizonte": horizonte[-1].strip() if horizonte else None,
-            "invalidez": invalidez_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,
+            "invalidez": invalidez_de(decision), "condicion": condicion_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,
             # Hold dice que hoy no se abre; con los tres niveles queda una operacion que podria abrirse.
             "condicional": condicional,
             "pendiente": None not in (entrada, cierre, direccion) and (entrada - cierre) * direccion > 0,
@@ -298,6 +319,8 @@ def _controles_swing(c, plan, rr_minimo, referencia, sentido, trader):
         _reservas(c, "Plan", RESERVAS, "El trader propuso no operar: estos niveles no son una operación suya.")
     if entrada is None:
         _reservas(c, "Plan", RESERVAS, "Falta la entrada: la relación riesgo/beneficio se calculó desde el último precio.")
+    elif plan.get("condicion") is None:
+        _reservas(c, "Plan", RESERVAS, "El gerente no dejó claro si la entrada depende de una condición: no des por hecho que se entra al llegar al precio.")
     if plan["invalidez"] is None:
         _reservas(c, "Plan", RESERVAS, "Falta la condición que invalida la operación, con un nivel concreto.")
     elif invalidez_incoherente(plan["invalidez"], sentido, base, stop):
@@ -341,7 +364,7 @@ def _sin_cierre(ticker, fecha, referencia, vivo, reloj=None) -> bool:
 
 
 # Lo que la decision presenta como el precio de hoy. Otros cierres citados pueden ser historicos.
-_PRECIO_CITADO = re.compile(r"(?:cierre aportado|cierre de referencia|[uú]ltimo cierre|latest close|last close|current price|precio actual)\D{0,30}?([0-9][0-9.,]*[0-9]|[0-9])", re.I)
+_PRECIO_CITADO = re.compile(r"(?:cierre aportado|cierre de referencia|[uú]ltimo cierre|latest close|last close|current price|precio actual)[^\d\n]{0,30}?([0-9][0-9.,]*[0-9]|[0-9])", re.I)
 
 
 _FECHAS = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}/[0-9]{1,2}(?:/[0-9]{2,4})?|[0-9]{1,2} de [^\W\d_]+", re.I)

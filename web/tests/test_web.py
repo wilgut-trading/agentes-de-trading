@@ -292,3 +292,17 @@ def test_j_underweight_sin_short_no_afirma_short(dentro, tienda):
     assert "<td>LONG</td>" in pagina and "reducir o salir de una posición larga" not in pagina
     pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": None, "condicional": False, "entrada_limite": None})
     assert "<td>—</td>" in pagina and "reducir o salir de una posición larga" not in pagina
+
+
+def test_k_condicion_de_entrada_se_ve_y_se_escapa(dentro, tienda):
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "condicion": "cierre bajo 595.88 <script>x</script>"})
+    assert "Entra solo si:" in pagina and "con condición" in pagina and "<script>x</script>" not in pagina
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "condicion": ""})
+    assert "no puso condición" in pagina and "Entra solo si:" not in pagina
+    pagina = _con_jev(dentro, tienda, None, PLAN)
+    assert "no puso condición" not in pagina and "Entra solo si:" not in pagina
+
+
+def test_k_sin_entrada_no_muestra_condicion(dentro, tienda):
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "entrada": None, "condicional": False, "condicion": "cierre bajo 90"})
+    assert "Entra solo si:" not in pagina and "con condición" not in pagina

@@ -10,7 +10,7 @@ from motor import almacen as al, arbitro as ar, objetivos as ob, run
 
 MEDIDO = {"n": 100, "aciertos": 70, "tasa": .7, "bajo": .6, "alto": .8, "alfa_medio": 2.0, "ventaja": True}
 LARGO = "x" * 300
-DECISION = "**Rating**: Buy\n\n**Investment Thesis**: Sube.\nInvalidation: cierre por debajo de 94\n\n**Price Target**: 115\n\n**Time Horizon**: 10 sessions"
+DECISION = "**Rating**: Buy\n\n**Investment Thesis**: Sube.\nEntry condition: none\nInvalidation: cierre por debajo de 94\n\n**Price Target**: 115\n\n**Time Horizon**: 10 sessions"
 REF = {"cierre": 100.0, "fecha": "2026-11-02", "rango_medio": 2.0}
 
 
@@ -789,7 +789,7 @@ def test_plazo_en_sesiones(texto, tope):
 
 
 def _swing(objetivo_precio=115, stop=95, horizonte="10 sessions", rr=2.5, rating="Buy", analisis="swing"):
-    estado = _estado(trader_investment_plan=f"**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: {stop}", final_trade_decision=f"**Rating**: Buy\n\nInvalidation: cierre por debajo de 94\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
+    estado = _estado(trader_investment_plan=f"**Action**: Buy\n**Entry Price**: 100\n**Stop Loss**: {stop}", final_trade_decision=f"**Rating**: Buy\n\nEntry condition: none\nInvalidation: cierre por debajo de 94\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
     c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", rating, ["market", "news"], REF, None, 0, MEDIDO, True, _noche(), None, analisis, rr)
     return {(x["control"], x["resultado"]) for x in c}
 
@@ -896,7 +896,7 @@ def test_backtest_recibe_el_mandato(motor, monkeypatch):
 def _swing_precio(cierre=100.0, entrada=100, stop=95, objetivo_precio=115, rango=2.0, rating="Buy", invalidez="Invalidation: cierre por debajo de 94", horizonte="10 sessions"):
     linea_entrada = f"**Entry Price**: {entrada}\n" if entrada is not None else ""
     estado = _estado(trader_investment_plan=f"**Action**: Buy\n{linea_entrada}**Stop Loss**: {stop}", investment_plan="**Recommendation**: " + rating,
-                     final_trade_decision=f"**Rating**: {rating}\n\n{invalidez}\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
+                     final_trade_decision=f"**Rating**: {rating}\n\nEntry condition: none\n{invalidez}\n\n**Price Target**: {objetivo_precio}\n\n**Time Horizon**: {horizonte}")
     ref = {"cierre": cierre, "fecha": "2026-11-02", "rango_medio": rango}
     c = ar.controles_deterministas(estado, "NVDA", "2026-11-03", rating, ["market", "news"], ref, None, 0, MEDIDO, True, _noche(), None, "swing", 2.5)
     return {(x["control"], x["resultado"]) for x in c}
@@ -1003,7 +1003,7 @@ def test_o2_decision_real_limpia_llega_a_sin_objeciones():
         estado = _estado(
             investment_plan=f"**Recommendation**: {rating}",
             trader_investment_plan=render_trader_proposal(TraderProposal(action=accion, reasoning="Razón.", entry_price=entrada, stop_loss=stop)),
-            final_trade_decision=render_pm_decision(PortfolioDecision(rating=rating, executive_summary="Plan.", investment_thesis=f"Tesis clara. Invalidación: cierre más allá de {stop}.", price_target=objetivo, time_horizon="10 sesiones")))
+            final_trade_decision=render_pm_decision(PortfolioDecision(rating=rating, executive_summary="Plan.", investment_thesis=f"Tesis clara.\nEntry condition: none\nInvalidación: cierre más allá de {stop}.", price_target=objetivo, time_horizon="10 sesiones")))
         j = ar.arbitrar(estado, "NVDA", "2026-11-03", rating, ["market", "news"], Modelo(ar.Fiscal(objeciones=[])), Modelo(), MEDIDO, vivo=True,
                         precio=lambda *a: {"cierre": 100.0, "fecha": "2026-11-03", "rango_medio": 2.0}, eventos=lambda *a: None, reloj=_noche(), objetivo_analisis="swing", rr_minimo=2.5)
         assert j["veredicto"] == ar.SIN_OBJECIONES, (rating, j["controles"])
@@ -1065,7 +1065,7 @@ def _swing_hold(estado, ref=None, rating="Hold", rr=2.5):
     return {(x["control"], x["resultado"]) for x in c}, ar.plan_de(estado, ref, rr, rating)
 
 
-CONDICIONAL = "Esperar.\nEntry: 66.90\nStop: 64.02\nInvalidation: close below 64.02"
+CONDICIONAL = "Esperar.\nEntry condition: none\nEntry: 66.90\nStop: 64.02\nInvalidation: close below 64.02"
 
 
 def test_h1_hold_con_plan_condicional_se_revisa_y_se_rotula():
@@ -1280,7 +1280,7 @@ def test_b3_cambio_de_un_solo_nivel_del_trader_se_avisa():
 
 
 def test_b4_invalidez_es_la_del_plan_y_cuadra_con_la_direccion():
-    controles, plan = _swing_hold(_caso("Old. Invalidation: close above 50\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")
+    controles, plan = _swing_hold(_caso("Old. Invalidation: close above 50\nEntry condition: none\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")
     assert plan["invalidez"] == "close below 96" and ("Plan", ar.RESERVAS) not in controles
     controles, _ = _swing_hold(_caso("Sube.\nInvalidation: close above 96", stop="96", objetivo="115"), REF_CIEN, "Buy")
     assert ("Plan", ar.RESERVAS) in controles
@@ -1303,7 +1303,7 @@ def test_b6_formas_que_el_modelo_escribiria(bloque):
 
 @pytest.mark.parametrize("prosa", ["Trailing stop: 5%", "Re-entry: 3", "Non-stop: 24", "Entry: 2026-11-10"])
 def test_b7_no_son_niveles(prosa):
-    assert not _swing_hold(_caso(f"Sube. {prosa}.\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+    assert not _swing_hold(_caso(f"Sube. {prosa}.\nEntry condition: none\nEntry: 100\nStop: 96\nInvalidation: close below 96", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
 
 
 @pytest.mark.parametrize("prosa", ["Stop = 80", "Stop \u2014 97", "Stop: $97"])
@@ -1351,14 +1351,14 @@ def test_c3_niveles_hipoteticos_de_un_trader_en_hold_no_tumban_el_plan(entrada, 
 
 @pytest.mark.parametrize("invalidez", ["close below 150", "close below 20", "cierre sobre 96", "cierre arriba de 96", "close over 96", "price exceeds 96"])
 def test_c4_invalidez_que_no_protege_una_compra(invalidez):
-    controles, _ = _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")
+    controles, _ = _swing_hold(_caso(f"Sube.\nEntry condition: none\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")
     assert ("Plan", ar.RESERVAS) in controles
 
 
 @pytest.mark.parametrize("invalidez", ["close below 96 on volume above average", "close below 96 with above-average volume", "close below 96 or above 120",
                                        "close below 96 (or close above 96, for a short)", "cierre por debajo de 95", "close under 97"])
 def test_c5_invalidez_normal_de_una_compra(invalidez):
-    assert not _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+    assert not _swing_hold(_caso(f"Sube.\nEntry condition: none\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
 
 
 def test_c6_invalidez_tras_el_plazo_no_cuenta():
@@ -1374,7 +1374,7 @@ def test_c7_nivel_seguido_de_coma_se_ve(prosa):
 
 @pytest.mark.parametrize("invalidez", ["close > 96", "el precio supera 96", "cierre superior a 96", "close higher than 96", "close past 96"])
 def test_e1_invalidez_contraria_con_otras_palabras(invalidez):
-    assert ("Plan", ar.RESERVAS) in _swing_hold(_caso(f"Sube.\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
+    assert ("Plan", ar.RESERVAS) in _swing_hold(_caso(f"Sube.\nEntry condition: none\nInvalidation: {invalidez}", stop="96", objetivo="115"), REF_CIEN, "Buy")[0]
 
 
 def test_e2_el_nivel_de_la_invalidez_va_tras_la_direccion():
@@ -1814,3 +1814,65 @@ def test_objetivo_imposible_no_tiene_lado():
     decision = "Entry: 100\nStop: 110\nInvalidation: close above 110\nPrice Target: {}"
     assert ar.plan_de({"final_trade_decision": decision.format(-10)}, REF, rating="Sell", swing=False)["lado"] is None
     assert ar.plan_de({"final_trade_decision": decision.format(80)}, REF, rating="Sell", swing=False)["lado"] == -1
+
+
+_META = ("Rating: Underweight\nInvestment Thesis: La evidencia es bajista.\nEntry condition: cierre inferior a 595.88 y retesteo fallido\n"
+         "Entry: 595.80\nStop: 627.87\nInvalidation: close above 627.87\nPrice Target: 558.79\nTime Horizon: 10 sessions")
+
+
+def test_condicion_de_entrada_se_lee_y_no_estorba_a_los_niveles():
+    p = ar.plan_de({"final_trade_decision": _META}, REF, rating="Underweight")
+    assert p["condicion"] == "cierre inferior a 595.88 y retesteo fallido"
+    assert (p["entrada"], p["stop"], p["objetivo"], p["lado"]) == (595.80, 627.87, 558.79, -1)
+    assert 595.88 not in ar._declarados(_META, "entrada")
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("Entry condition: none\nEntry: 1", ""),
+    ("Entry condition: None.\nEntry: 1", ""),
+    ("Entry condition: No aplica\nEntry: 1", ""),
+    ("Condición de entrada: ninguna\nEntry: 1", ""),
+    ("Entry condition: sin retesteo no se entra\nEntry: 1", "sin retesteo no se entra"),
+    ("Entry condition: none until breakout\nEntry: 1", "none until breakout"),
+    ("**Entry condition**: close below 90. Entry: 88", "close below 90."),
+    ("Tesis. Entry condition: cierre sobre 90.5. Entry: 100.0", "cierre sobre 90.5."),
+    ("**Investment Thesis**: Entry condition: cierre sobre 90\nEntry: 100", "cierre sobre 90"),
+    ("Entry: 1\nStop: 2", None),
+    ("Entry condition:\nEntry: 1", None),
+    ("Entry condition: vieja\nEntry condition: nueva\nEntry: 1", "nueva"),
+    # Una cita o una condicion en dos renglones no pasan por "sin condicion".
+    ("> Entry condition: none\nHoy exigimos cierre sobre 99.5\nEntry: 1", None),
+    ("Entry condition: none\nunless it closes above 90\nEntry: 1", None),
+    ("Entry condition: close below 90\nand volume above average\nEntry: 1", None),
+    (None, None),
+])
+def test_condicion_de_entrada_casos(texto, esperado):
+    assert ar.condicion_de(texto) == esperado
+
+
+def test_mandato_pide_condicion_justo_antes_de_los_niveles():
+    from motor import objetivos as ob
+    assert "Entry condition: <" in ob.mandato("swing") and "Entry condition" not in ob.mandato("inversion")
+    assert ob.mandato("swing").index("Entry condition: <") < ob.mandato("swing").index("Entry: <price>")
+
+
+def _reservas_plan(decision):
+    c = []
+    ar._controles_swing(c, ar.plan_de({"final_trade_decision": decision}, REF, rating="Underweight"), 2.5, REF, -1, -1)
+    return [x["detalle"] for x in c]
+
+
+def test_falta_condicion_deja_reservas_solo_si_no_la_dice():
+    sin = _META.replace("Entry condition: cierre inferior a 595.88 y retesteo fallido\n", "")
+    def plan(d):
+        return [x for x in _reservas_plan(d) if "depende de una condición" in x]
+    assert plan(sin) and not plan(_META) and not plan(_META.replace("cierre inferior a 595.88 y retesteo fallido", "none"))
+
+
+def test_precio_citado_no_cruza_de_renglon():
+    c = []
+    ar.contrastar_precios(c, REF, None, "Entry condition: retest of the last close\nEntry: 104.0", False)
+    assert not [x for x in c if "cita" in x["detalle"]]
+    c = []
+    ar.contrastar_precios(c, REF, None, "Last close: 104.0", False)
+    assert [x for x in c if "cita" in x["detalle"]]
