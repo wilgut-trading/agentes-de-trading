@@ -60,7 +60,7 @@ jobs:
         run: |
           # ^;^ cambia el separador: AGENTES_ANALISTAS lleva comas.
           COMUNES="^;^AGENTES_BUCKET=$BUCKET;AGENTES_AMBIENTE=prod;GOOGLE_CLOUD_PROJECT=$PROYECTO;AGENTES_ANALISTAS=$ANALISTAS;TRADINGAGENTS_DEEP_THINK_LLM=$PROFUNDO;TRADINGAGENTS_QUICK_THINK_LLM=$RAPIDO;TRADINGAGENTS_OUTPUT_LANGUAGE=$IDIOMA;SEC_EDGAR_USER_AGENT=$SEC;AGENTES_CORREOS=$CORREOS;AGENTES_ORIGENES=$ORIGENES;FIREBASE_APIKEY=$FB_KEY;FIREBASE_AUTHDOMAIN=$PROYECTO.web.app;FIREBASE_PROJECTID=$PROYECTO"
-          gcloud run jobs deploy agentes-motor --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --service-account "agentes-motor@$PROYECTO.iam.gserviceaccount.com" --update-env-vars "$COMUNES;FRED_API_KEY=$FRED;TYPESAFE_API_KEY=$TYPESAFE"
+          gcloud run jobs deploy agentes-motor --region "$REGION" --image "$IMAGEN" --command python --args=-m,motor.run --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 6h --service-account "agentes-motor@$PROYECTO.iam.gserviceaccount.com" --update-env-vars "$COMUNES;FRED_API_KEY=$FRED;TYPESAFE_API_KEY=$TYPESAFE;TYPESAFE_DEFAULT_MODEL=jev-1.14.0"
           gcloud run deploy agentes-web --region "$REGION" --image "$IMAGEN" --min-instances 0 --max-instances 2 --allow-unauthenticated --service-account "agentes-web@$PROYECTO.iam.gserviceaccount.com" --update-env-vars "$COMUNES"
           # Una vista previa fija el trafico: sin esto, lo nuevo se quedaria en 0 %.
           gcloud run services update-traffic agentes-web --region "$REGION" --to-latest

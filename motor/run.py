@@ -258,7 +258,8 @@ def _analizar(tienda, t, carpeta, simulado):
         juicio["base_historica"] = base_historica.de_plan(juicio["plan"], ticker, fecha, arbitro.sesiones_de(juicio["plan"]["horizonte"]) or valores["sesiones_swing"], juicio["sin_cierre"])
     if not simulado:
         al.actualizar(tienda, id_, etapa="Jev: leyendo la evidencia", avance=98)
-        juicio["jev"] = probabilidades.de_informes(final, ticker, juicio["plan"]["lado"], arbitro.sesiones_de(juicio["plan"]["horizonte"]) or ob.sesiones(valores, objetivo))
+        juicio["jev"] = probabilidades.de_informes(final, ticker, fecha, juicio["plan"]["lado"], arbitro.sesiones_de(juicio["plan"]["horizonte"]) or ob.sesiones(valores, objetivo), juicio["sin_cierre"])
+        _guardar_auditoria_jev(tienda, t["ambiente"], id_, juicio["jev"])
     ruta = Path(grafo.save_reports(final, ticker, Path(config["results_dir"]) / "reports" / id_))
     tienda.escribir(f"{al.prefijo(t['ambiente'])}informes/{id_}.html", ruta.with_name("complete_report.html").read_bytes())
     al.actualizar(tienda, id_, estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(), rating=rating,
@@ -266,6 +267,16 @@ def _analizar(tienda, t, carpeta, simulado):
                   simulado=simulado, vivo=vivo, con_cartera=bool(cartera), simbolo=normalize_symbol(ticker), objetivo=objetivo, version=grafo.run_settings()["version"], consumo=consumo.resumen())
     if vivo:   # despues de guardar el informe: un fallo aqui no debe costar el analisis
         _liquidar_el_otro(grafo, objetivo, valores)
+
+
+def _guardar_auditoria_jev(tienda, ambiente, id_, jev) -> None:
+    """Aparte del analisis: lleva los informes enteros, y perderla no debe costar el analisis."""
+    auditoria = (jev or {}).pop("auditoria", None)
+    if auditoria:
+        try:
+            al.guardar_json(tienda, f"{al.prefijo(ambiente)}informes/{id_}-jev.json", auditoria)
+        except Exception as e:
+            log.warning("No se guardó lo enviado a Jev: %s", type(e).__name__)
 
 
 def _precio_visto(config, ticker, fecha) -> tuple | None:

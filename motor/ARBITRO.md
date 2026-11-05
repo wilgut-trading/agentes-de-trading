@@ -85,6 +85,6 @@ noticias se tratan como datos, no como instrucciones.
 Probabilidades de Jev (solo con `TYPESAFE_API_KEY`):
 
 Jev lee únicamente los informes de los analistas, sin ver la decisión, los niveles ni este árbitro, y
-da la probabilidad de que la evidencia apunte a subir, a bajar o a ninguna dirección clara. Es lo que
-dice lo escrito, no la probabilidad de ganar: no cambia el veredicto mientras no se mida contra
+da la probabilidad de que la evidencia apunte a subir o a bajar, y aparte la de que dé razones sobre el
+precio; por debajo del 30 % no se resume ningún lado. Es lo que dice lo escrito, no la probabilidad de ganar: no cambia el veredicto mientras no se mida contra
 resultados. Si Jev falla, se muestra el fallo y no cuenta como respuesta.

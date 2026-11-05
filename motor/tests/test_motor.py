@@ -1661,6 +1661,14 @@ def test_lado_del_plan():
     assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Hold")["lado"] is None
 
 
+def _resp_jev(rise=0.25, fall=0.75, evidencia=0.9):
+    r = {}
+    for k in ("conjunto", "market", "news"):
+        r[f"{k}_a"] = r[f"{k}_b"] = {"type": "choice", "choice": "fall", "probabilities": {"rise": rise, "fall": fall}}
+        r[f"{k}_evidencia"] = {"type": "noul", "noul": evidencia}
+    return r
+
+
 def _jev(monkeypatch, respuesta=None, fallo=None):
     from motor import probabilidades as pr
     vistos = []
@@ -1669,9 +1677,11 @@ def _jev(monkeypatch, respuesta=None, fallo=None):
         vistos.append((estado, preguntas))
         if fallo:
             raise fallo
-        return respuesta or {q: {"type": "choice", "choice": "fall", "probabilities": {"rise": 0.2, "fall": 0.7, "unclear": 0.1}} for q in preguntas}
+        return respuesta or _resp_jev()
     monkeypatch.setattr(pr.post_screen, "system_one", falso)
+    monkeypatch.setattr(pr, "resolve_instrument_identity", lambda t: {"company_name": "Meta Platforms"})
     monkeypatch.setenv("TYPESAFE_API_KEY", "prueba")
+    monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "jev-1.14.0")
     return pr, vistos
 
 
@@ -1679,47 +1689,109 @@ ESTADO_JEV = {"market_report": "técnico", "news_report": "noticias", "sentiment
               "final_trade_decision": "Rating: Sell", "trader_investment_plan": "vender"}
 
 
+def _pedir_jev(pr, lado=-1, sin_cierre=False):
+    return pr.de_informes(ESTADO_JEV, "META", "2026-11-05", lado, 10, sin_cierre)
+
+
 def test_jev_sin_clave_no_llama(monkeypatch):
     from motor import probabilidades as pr
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setattr(pr.post_screen, "system_one", lambda *a: pytest.fail("no debe llamar"))
-    assert pr.de_informes(ESTADO_JEV, "META", -1, 10) is None
+    assert _pedir_jev(pr) is None
 
 
-def test_jev_no_ve_la_decision(monkeypatch):
+def test_jev_no_ve_la_decision_y_recibe_el_contexto(monkeypatch):
     pr, vistos = _jev(monkeypatch)
-    r = pr.de_informes(ESTADO_JEV, "META", -1, 10)
+    r = _pedir_jev(pr)
     estado, preguntas = vistos[0]
-    assert estado == {"instrument": "META", "reports": {"market": "técnico", "news": "noticias"}}
-    assert set(preguntas) == {"conjunto_a", "conjunto_b", "market_a", "market_b", "news_a", "news_b"}
-    assert (r["a_favor"], r["en_contra"]) == (0.7, 0.2)
+    assert estado == {"instrument": {"ticker": "META", "company": "Meta Platforms"}, "analysis_date": "2026-11-05",
+                      "reports": {"market": "técnico", "news": "noticias"}}
+    assert set(preguntas) == {f"{k}_{s}" for k in ("conjunto", "market", "news") for s in ("a", "b", "evidencia")}
+    assert (r["a_favor"], r["en_contra"]) == (0.75, 0.25) and r["modelo"] == "jev-1.14.0"
+
+
+def test_jev_avisa_de_vela_abierta_solo_si_lo_esta(monkeypatch):
+    pr, vistos = _jev(monkeypatch)
+    _pedir_jev(pr)
+    _pedir_jev(pr, sin_cierre=True)
+    assert "price_data_note" not in vistos[0][0] and "unfinished" in vistos[1][0]["price_data_note"]
+
+
+def test_jev_direccion_sin_opcion_nula_y_en_ambos_ordenes(monkeypatch):
+    r = _resp_jev()
+    r["conjunto_a"] = {"probabilities": {"rise": 0.6, "fall": 0.4}}
+    r["conjunto_b"] = {"probabilities": {"rise": 0.2, "fall": 0.8}}
+    pr, vistos = _jev(monkeypatch, r)
+    res = _pedir_jev(pr, 1)
+    preguntas = vistos[0][1]
+    assert list(preguntas["market_a"]["criteria"]) == ["rise", "fall"] and list(preguntas["market_b"]["criteria"]) == ["fall", "rise"]
+    assert preguntas["market_evidencia"]["type"] == "noul"
+    assert (round(res["a_favor"], 6), round(res["en_contra"], 6)) == (0.4, 0.6)
+
+
+def test_jev_sube_y_baja_suman_100_con_desvio_tolerado(monkeypatch):
+    pr, _ = _jev(monkeypatch, _resp_jev(0.505, 0.505))
+    fila = _pedir_jev(pr)["lecturas"][0]
+    assert round(fila["sube"] + fila["baja"], 9) == 1
+
+
+def test_jev_sin_evidencia_no_resume_lado(monkeypatch):
+    pr, _ = _jev(monkeypatch, _resp_jev(evidencia=0.2))
+    r = _pedir_jev(pr)
+    assert r["con_evidencia"] is False and r["a_favor"] is None and len(r["lecturas"]) == 3 and not r["lecturas"][0]["con_evidencia"]
 
 
 def test_jev_por_lado(monkeypatch):
     pr, _ = _jev(monkeypatch)
-    assert pr.de_informes(ESTADO_JEV, "META", 1, 10)["a_favor"] == 0.2
-    assert pr.de_informes(ESTADO_JEV, "META", None, 10)["a_favor"] is None
+    assert _pedir_jev(pr, 1)["a_favor"] == 0.25
+    assert _pedir_jev(pr, None)["a_favor"] is None
 
 
-@pytest.mark.parametrize("respuesta", [{"conjunto_a": {"probabilities": {"rise": 2, "fall": 0, "unclear": 0}}, "conjunto_b": {"probabilities": {"rise": 0, "fall": 0, "unclear": 1}}}, {"conjunto_a": {"probabilities": {"rise": 0.9, "fall": 0.9, "unclear": 0.9}}, "conjunto_b": {"probabilities": {"rise": 0, "fall": 0, "unclear": 1}}}, {"conjunto_a": {}}])
-def test_jev_respuesta_mala_es_error(monkeypatch, respuesta):
-    pr, _ = _jev(monkeypatch, respuesta)
-    assert "error" in pr.de_informes(ESTADO_JEV, "META", -1, 10)
+@pytest.mark.parametrize("cambio", [
+    {"conjunto_a": {"probabilities": {"rise": 2, "fall": -1}}},
+    {"conjunto_a": {"probabilities": {"rise": 0.9, "fall": 0.9}}},
+    {"conjunto_a": {"probabilities": {"rise": True, "fall": 0}}},
+    {"conjunto_a": {}},
+    {"market_evidencia": {"noul": 1.5}},
+    {"market_evidencia": {"noul": "0.5"}},
+])
+def test_jev_respuesta_mala_es_error(monkeypatch, cambio):
+    pr, _ = _jev(monkeypatch, {**_resp_jev(), **cambio})
+    r = _pedir_jev(pr)
+    assert r["error"] == "respuesta no válida" and r["auditoria"]["respuestas"]
 
 
 def test_jev_caido_es_error_no_respuesta(monkeypatch):
     from tradingagents.agents.post_screen import TypeSafeError
     pr, _ = _jev(monkeypatch, fallo=TypeSafeError("HTTP 401"))
-    assert pr.de_informes(ESTADO_JEV, "META", -1, 10) == {"error": "HTTP 401"}
+    r = _pedir_jev(pr)
+    assert r["error"] == "HTTP 401" and "lecturas" not in r and r["auditoria"]["respuestas"] is None
 
 
-def test_jev_pregunta_en_ambos_ordenes_y_promedia(monkeypatch):
-    def p(rise, fall):
-        return {"probabilities": {"rise": rise, "fall": fall, "unclear": round(1 - rise - fall, 9)}}
-    pr, vistos = _jev(monkeypatch, {f"{k}_{o}": p(0.6, 0.3) if o == "a" else p(0.2, 0.7) for k in ("conjunto", "market", "news") for o in "ab"})
-    r = pr.de_informes(ESTADO_JEV, "META", 1, 10)
-    assert list(vistos[0][1]["market_a"]["criteria"])[:2] == ["rise", "fall"] and list(vistos[0][1]["market_b"]["criteria"])[:2] == ["fall", "rise"]
-    assert (round(r["a_favor"], 6), round(r["en_contra"], 6)) == (0.4, 0.5)
+def test_jev_auditoria_va_aparte_y_sin_clave(tmp_path, monkeypatch):
+    import json
+
+    from motor import run
+    pr, _ = _jev(monkeypatch)
+    jev = _pedir_jev(pr)
+    tienda = al.Local(tmp_path)
+    run._guardar_auditoria_jev(tienda, "prod", "abc", jev)
+    assert "auditoria" not in jev
+    guardado = json.loads(tienda.leer(f"{al.prefijo('prod')}informes/abc-jev.json")[0])
+    assert guardado["modelo"] == "jev-1.14.0" and guardado["peticion"]["state"]["reports"] and guardado["respuestas"]
+    assert "prueba" not in json.dumps(guardado)
+
+
+def test_jev_auditoria_que_falla_no_cuesta_el_analisis():
+    from motor import run
+
+    class Rota:
+        def escribir(self, *a, **k):
+            raise OSError("sin red")
+    jev = {"lecturas": [], "auditoria": {"modelo": "x"}}
+    run._guardar_auditoria_jev(Rota(), "prod", "abc", jev)
+    assert "auditoria" not in jev
+    run._guardar_auditoria_jev(Rota(), "prod", "abc", None)
 
 
 def test_hold_sin_plan_condicional_no_tiene_lado():

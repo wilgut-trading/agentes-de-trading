@@ -269,10 +269,15 @@ def _con_jev(dentro, tienda, jev, plan=None):
 
 
 def test_j_lado_y_probabilidades_de_jev_se_ven(dentro, tienda):
-    fila = {"nombre": "Todos los informes", "sube": 0.2, "baja": 0.7, "sin_direccion": 0.1}
-    pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "filas": [fila], "a_favor": 0.7, "en_contra": 0.2})
+    fila = {"nombre": "Todos los informes", "sube": 0.3, "baja": 0.7, "evidencia": 0.9, "con_evidencia": True}
+    pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "modelo": "jev-1.14.0", "lecturas": [fila], "con_evidencia": True, "a_favor": 0.7, "en_contra": 0.3})
     assert "<td>SHORT</td>" in pagina and "reducir o salir de una posición larga" in pagina
-    assert "apunte a SHORT: <b>70 %</b>" in pagina and "No es la probabilidad de ganar" in pagina and "Todos los informes" in pagina
+    assert "apunte a SHORT: <b>70 %</b>" in pagina and "No es la probabilidad de ganar" in pagina and "Todos los informes" in pagina and "jev-1.14.0" in pagina and "<td>90 %</td>" in pagina
+    pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "modelo": "jev-1.14.0", "lecturas": [{**fila, "evidencia": 0.1, "con_evidencia": False}], "con_evidencia": False, "a_favor": None, "en_contra": None})
+    assert "casi no dan razones" in pagina and "apunte a SHORT" not in pagina and "<td>70 %</td>" not in pagina and "<td>—</td>" in pagina
+    # Una forma guardada antes de este cambio no rompe la página ni inventa que falte evidencia.
+    pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "filas": [{"nombre": "x", "sube": 0.2, "baja": 0.7, "sin_direccion": 0.1}], "a_favor": 0.7, "en_contra": 0.2})
+    assert "apunte a SHORT: <b>70 %</b>" in pagina and "casi no dan razones" not in pagina
 
 
 def test_j_jev_caido_se_dice_y_analisis_viejo_no_rompe(dentro, tienda):
