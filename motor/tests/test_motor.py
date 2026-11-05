@@ -1646,3 +1646,88 @@ def test_i4_coma_decimal_del_informe_en_espanol(linea, esperado):
 @pytest.mark.parametrize("linea", ["Entry: 383,212\nStop: 380", "Entry: 1,266\nStop: 1200", "Entry: 1.2.3\nStop: 1"])
 def test_i5_numeros_ambiguos_no_son_un_plan(linea):
     assert ar._bloque(f"**Investment Thesis**: Sube.\n{linea}\nInvalidation: close below 1\n\n**Price Target**: 110") is None
+
+
+def test_lado_del_plan():
+    p = ar.plan_de({"final_trade_decision": "Price Target: 558.79\nTime Horizon: 10 sessions\nInvestment Thesis: x\nEntry: 595.80\nStop: 627.87\nInvalidation: close above 627.87\nPrice Target: 558.79"}, REF, rating="Underweight")
+    assert p["lado"] == -1
+    assert ar.plan_de(_estado(), REF)["lado"] == 1
+    assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Sell")["lado"] == -1
+    assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Hold")["lado"] is None
+
+
+def _jev(monkeypatch, respuesta=None, fallo=None):
+    from motor import probabilidades as pr
+    vistos = []
+
+    def falso(estado, preguntas):
+        vistos.append((estado, preguntas))
+        if fallo:
+            raise fallo
+        return respuesta or {q: {"type": "choice", "choice": "fall", "probabilities": {"rise": 0.2, "fall": 0.7, "unclear": 0.1}} for q in preguntas}
+    monkeypatch.setattr(pr.post_screen, "system_one", falso)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "prueba")
+    return pr, vistos
+
+
+ESTADO_JEV = {"market_report": "técnico", "news_report": "noticias", "sentiment_report": " ",
+              "final_trade_decision": "Rating: Sell", "trader_investment_plan": "vender"}
+
+
+def test_jev_sin_clave_no_llama(monkeypatch):
+    from motor import probabilidades as pr
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(pr.post_screen, "system_one", lambda *a: pytest.fail("no debe llamar"))
+    assert pr.de_informes(ESTADO_JEV, "META", -1, 10) is None
+
+
+def test_jev_no_ve_la_decision(monkeypatch):
+    pr, vistos = _jev(monkeypatch)
+    r = pr.de_informes(ESTADO_JEV, "META", -1, 10)
+    estado, preguntas = vistos[0]
+    assert estado == {"instrument": "META", "reports": {"market": "técnico", "news": "noticias"}}
+    assert set(preguntas) == {"conjunto_a", "conjunto_b", "market_a", "market_b", "news_a", "news_b"}
+    assert (r["a_favor"], r["en_contra"]) == (0.7, 0.2)
+
+
+def test_jev_por_lado(monkeypatch):
+    pr, _ = _jev(monkeypatch)
+    assert pr.de_informes(ESTADO_JEV, "META", 1, 10)["a_favor"] == 0.2
+    assert pr.de_informes(ESTADO_JEV, "META", None, 10)["a_favor"] is None
+
+
+@pytest.mark.parametrize("respuesta", [{"conjunto_a": {"probabilities": {"rise": 2, "fall": 0, "unclear": 0}}, "conjunto_b": {"probabilities": {"rise": 0, "fall": 0, "unclear": 1}}}, {"conjunto_a": {"probabilities": {"rise": 0.9, "fall": 0.9, "unclear": 0.9}}, "conjunto_b": {"probabilities": {"rise": 0, "fall": 0, "unclear": 1}}}, {"conjunto_a": {}}])
+def test_jev_respuesta_mala_es_error(monkeypatch, respuesta):
+    pr, _ = _jev(monkeypatch, respuesta)
+    assert "error" in pr.de_informes(ESTADO_JEV, "META", -1, 10)
+
+
+def test_jev_caido_es_error_no_respuesta(monkeypatch):
+    from tradingagents.agents.post_screen import TypeSafeError
+    pr, _ = _jev(monkeypatch, fallo=TypeSafeError("HTTP 401"))
+    assert pr.de_informes(ESTADO_JEV, "META", -1, 10) == {"error": "HTTP 401"}
+
+
+def test_jev_pregunta_en_ambos_ordenes_y_promedia(monkeypatch):
+    def p(rise, fall):
+        return {"probabilities": {"rise": rise, "fall": fall, "unclear": round(1 - rise - fall, 9)}}
+    pr, vistos = _jev(monkeypatch, {f"{k}_{o}": p(0.6, 0.3) if o == "a" else p(0.2, 0.7) for k in ("conjunto", "market", "news") for o in "ab"})
+    r = pr.de_informes(ESTADO_JEV, "META", 1, 10)
+    assert list(vistos[0][1]["market_a"]["criteria"])[:2] == ["rise", "fall"] and list(vistos[0][1]["market_b"]["criteria"])[:2] == ["fall", "rise"]
+    assert (round(r["a_favor"], 6), round(r["en_contra"], 6)) == (0.4, 0.5)
+
+
+def test_hold_sin_plan_condicional_no_tiene_lado():
+    decision = "Entry: 100\nStop: 90\nInvalidation: close below 90\nPrice Target: 120\nTime Horizon: 6 months"
+    assert ar.plan_de({"final_trade_decision": decision}, REF, rating="Hold", swing=False)["lado"] is None
+    assert ar.plan_de({"final_trade_decision": decision}, REF, rating="Hold", swing=True)["lado"] == 1
+
+
+def test_stop_sin_referencia_no_inventa_lado():
+    assert ar.plan_de({"final_trade_decision": "x", "trader_investment_plan": "Stop: 95"}, None, rating="Underweight")["lado"] is None
+
+
+def test_jev_sin_filtrar_no_es_fallo_de_datos():
+    from motor.run import FALLO_DATOS
+    assert not FALLO_DATOS.search("<Jev screening unavailable (HTTP 401); posts are unscreened>\nposts")
+    assert FALLO_DATOS.search("<StockTwits unavailable: 503>")

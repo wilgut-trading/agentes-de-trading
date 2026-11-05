@@ -239,11 +239,21 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     direccion = (1 if objetivo > base else -1) if rr is not None else None
     horizonte = _lineas(r"Time Horizon|Horizonte|Plazo", decision)
     a_favor = direccion is not None and SENTIDO.get(rating, 0) * direccion >= 0
-    return {"entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
+    sentido = SENTIDO.get(rating, 0)
+    condicional = swing and rating == "Hold" and entrada is not None and direccion is not None
+    # Sin relacion calculable manda el rating, salvo que el stop sea de la operacion contraria.
+    # Hold dice que hoy no se abre: solo tiene lado si los niveles forman un plan condicional.
+    if rating == "Hold":
+        lado = direccion if condicional else None
+    elif direccion is not None:
+        lado = direccion
+    else:
+        lado = (sentido or None) if stop is None or (base is not None and (stop - base) * sentido < 0) else None
+    return {"lado": lado, "entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
             "rr_precio": _relacion(cierre, stop, objetivo), "horizonte": horizonte[-1].strip() if horizonte else None,
             "invalidez": invalidez_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,
             # Hold dice que hoy no se abre; con los tres niveles queda una operacion que podria abrirse.
-            "condicional": swing and rating == "Hold" and entrada is not None and direccion is not None,
+            "condicional": condicional,
             "pendiente": None not in (entrada, cierre, direccion) and (entrada - cierre) * direccion > 0,
             "entrada_limite": round((objetivo + rr_minimo * stop) / (1 + rr_minimo), 9) if a_favor else None}
 

@@ -30,8 +30,9 @@ ETAPAS = (("market_report", "Analista técnico"), ("sentiment_report", "Analista
           ("news_report", "Analista de noticias"), ("fundamentals_report", "Analista fundamental"),
           ("investment_plan", "Debate e investigación"), ("trader_investment_plan", "Trader"),
           ("final_trade_decision", "Riesgo y gerente de cartera"))
-# Como avisan las herramientas y fuentes del framework de que no trajeron datos.
-FALLO_DATOS = re.compile(r"(NO_)?DATA_(UN)?AVAILABLE:|^\s*<[^>\n]*unavailable|data is currently unavailable", re.I | re.M)
+# Como avisan las herramientas y fuentes del framework de que no trajeron datos. Si Jev no filtra
+# las publicaciones, estas llegan igual: eso no es un fallo de datos.
+FALLO_DATOS = re.compile(r"(NO_)?DATA_(UN)?AVAILABLE:|^\s*<(?!Jev screening)[^>\n]*unavailable|data is currently unavailable", re.I | re.M)
 PARAR = "parar"
 LIMITE = "Pausado por límite del plan de ChatGPT. Pulsa Reactivar cuando se renueve."
 SESION_NOMBRE = "chatgpt-auth.json"
@@ -183,7 +184,7 @@ def _liquidar_el_otro(grafo, objetivo, valores):
 def _analizar(tienda, t, carpeta, simulado):
     from datetime import date
 
-    from motor import arbitro, base_historica
+    from motor import arbitro, base_historica, probabilidades
     from motor.consumo import Consumo
     from tradingagents.agents.analysts import sentiment_analyst as sentimiento
     from tradingagents.agents.rating import run_rating
@@ -255,6 +256,9 @@ def _analizar(tienda, t, carpeta, simulado):
                               visto=_precio_visto(config, ticker, fecha), contrastar="market" in t["analistas"] and not simulado)
     if objetivo == "swing" and not simulado:
         juicio["base_historica"] = base_historica.de_plan(juicio["plan"], ticker, fecha, arbitro.sesiones_de(juicio["plan"]["horizonte"]) or valores["sesiones_swing"], juicio["sin_cierre"])
+    if not simulado:
+        al.actualizar(tienda, id_, etapa="Jev: leyendo la evidencia", avance=98)
+        juicio["jev"] = probabilidades.de_informes(final, ticker, juicio["plan"]["lado"], arbitro.sesiones_de(juicio["plan"]["horizonte"]) or ob.sesiones(valores, objetivo))
     ruta = Path(grafo.save_reports(final, ticker, Path(config["results_dir"]) / "reports" / id_))
     tienda.escribir(f"{al.prefijo(t['ambiente'])}informes/{id_}.html", ruta.with_name("complete_report.html").read_bytes())
     al.actualizar(tienda, id_, estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(), rating=rating,

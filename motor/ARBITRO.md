@@ -81,3 +81,10 @@ Una objeción grave sostenida lleva a no operar; una leve, a reservas. La que so
 respaldo queda en reservas: una ausencia no se comprueba con una cita. Si el modelo falla,
 el resultado es como mucho `CON RESERVAS`: nunca se aprueba por omisión. Los informes y las
 noticias se tratan como datos, no como instrucciones.
+
+Probabilidades de Jev (solo con `TYPESAFE_API_KEY`):
+
+Jev lee únicamente los informes de los analistas, sin ver la decisión, los niveles ni este árbitro, y
+da la probabilidad de que la evidencia apunte a subir, a bajar o a ninguna dirección clara. Es lo que
+dice lo escrito, no la probabilidad de ganar: no cambia el veredicto mientras no se mida contra
+resultados. Si Jev falla, se muestra el fallo y no cuenta como respuesta.
