@@ -885,7 +885,7 @@ def test_medicion_configurable_llega_al_framework(motor):
 def test_backtest_recibe_el_mandato(motor, monkeypatch):
     from motor import objetivos as ob
     from tradingagents.graph.trading_graph import TradingAgentsGraph
-    with ob.con_mandato("swing", 2.5):
+    with ob.con_mandato("swing"):
         grafo = object.__new__(TradingAgentsGraph)
         assert "SWING TRADE" in grafo.resolve_instrument_context("NVDA", "stock", "2026-01-05")
     assert "SWING" not in TradingAgentsGraph.resolve_instrument_context(grafo, "NVDA", "stock", "2026-01-05")
