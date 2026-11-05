@@ -254,3 +254,8 @@ def test_g_base_historica_y_consumo_se_ven(dentro, tienda):
     pagina = dentro.get(f"/analisis/{id_}").text
     assert "Base histórica de este plan" in pagina and "14 %" in pagina and "No es la probabilidad de esta operación" in pagina and "-0.19 R" in pagina
     assert "24 llamadas al modelo" in pagina and "1,200 tokens" in pagina
+
+
+def test_i_historial_y_backtests_aclaran_que_miden(dentro):
+    assert "mide la dirección" in dentro.get("/historial").text
+    assert "No aplica el árbitro ni tu mínimo" in dentro.get("/backtests").text

@@ -108,6 +108,11 @@ def _tesis(decision) -> str:
     return re.sub(r"[ \t\u00a0]+", " ", re.sub(r"[*_`]+", "", texto))
 
 
+def _nivel_del_bloque(texto: str) -> float | None:
+    """Admite la coma decimal del informe en espanol, pero no `1,266` ni `383,212`: son ambiguos."""
+    return float(texto.replace(",", ".")) if re.fullmatch(r"[0-9]+(?:\.[0-9]+|,[0-9]{1,2})?", texto) else None
+
+
 def _bloque(decision) -> tuple | None:
     """(entrada, stop) del gerente de cartera, solo de las tres lineas del mandato justo al final de
     la tesis y siempre como par. Un nivel suelto en el razonamiento, una cita o una noticia no es
@@ -121,17 +126,21 @@ def _bloque(decision) -> tuple | None:
         return None
     entrada, stop, invalidez = renglones[-3:]
     entrada = re.sub(r"^Investment Thesis: *", "", entrada)
-    niveles = [re.fullmatch(rf"(?:{rotulo}) *: *({_NUMERO.pattern})[.;]?", linea, re.I) for rotulo, linea in ((_ENTRADA, entrada), (_STOP, stop))]
+    niveles = [re.fullmatch(rf"(?:{rotulo}) *: *([0-9.,]+?)[.;]?", linea, re.I) for rotulo, linea in ((_ENTRADA, entrada), (_STOP, stop))]
     if not all(niveles) or not re.match(rf"(?:{_ROTULO_INVALIDEZ}) *:", invalidez, re.I):
         return None
-    par = float(niveles[0].group(1)), float(niveles[1].group(1))
-    return par if all(map(math.isfinite, par)) else None
+    par = _nivel_del_bloque(niveles[0].group(1)), _nivel_del_bloque(niveles[1].group(1))
+    return par if None not in par and all(map(math.isfinite, par)) else None
 
 
-def _niveles(estado) -> tuple:
-    """El gerente de cartera decide al final: su par manda sobre el del trader."""
+def _niveles(estado, rating=None) -> tuple:
+    """El gerente de cartera decide al final: su par manda sobre el del trader. En Hold, si el
+    gerente no planteo una operacion, los niveles del trader son hipoteticos: no son un plan."""
     trader = estado.get("trader_investment_plan") or ""
-    return _bloque(estado.get("final_trade_decision")) or (_nivel(trader, "entrada"), _nivel(trader, "stop"))
+    bloque = _bloque(estado.get("final_trade_decision"))
+    if bloque or rating == "Hold":
+        return bloque or (None, None)
+    return _nivel(trader, "entrada"), _nivel(trader, "stop")
 
 
 def _declarados(decision, cual) -> set:
@@ -221,7 +230,7 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     """Los niveles que el dueno va a operar y su relacion riesgo/beneficio, desde la entrada y desde
     el ultimo precio: una entrada lejana puede aparentar una relacion que hoy no existe."""
     decision = estado.get("final_trade_decision")
-    entrada, stop = _niveles(estado)
+    entrada, stop = _niveles(estado, rating)
     objetivo = _nivel(decision, "objetivo")
     cierre = (referencia or {}).get("cierre")
     base = entrada if entrada is not None else cierre
@@ -416,7 +425,7 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
                                 (decision, "stop", "el stop"), (decision, "objetivo", "el objetivo")):
         if _ilegible(texto, cual):
             _reservas(c, "Niveles", RESERVAS, f"No se pudo leer {nombre} como un precio: {_ultimo(ETIQUETAS[cual], texto).strip(' *_')[:60]}")
-    entrada, stop = _niveles(estado)
+    entrada, stop = _niveles(estado, rating)
     objetivo = _nivel(decision, "objetivo")
     bloque = _bloque(decision)
     for cual, valor, nombre in (("entrada", entrada, "entrada"), ("stop", stop, "stop")):

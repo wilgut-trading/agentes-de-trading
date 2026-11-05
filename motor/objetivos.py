@@ -64,7 +64,7 @@ def mandato(objetivo: str) -> str:
                 "adjust a level to reach a particular ratio. The Trader must give Entry Price and Stop Loss as plain numbers, whatever the "
                 "action. The Portfolio Manager must give Price Target as a plain number, Time Horizon written exactly like "
                 f"`10 sessions` (never above {MAX_SWING}), and end the thesis with exactly these three lines, in this order, with nothing after them and no quote marks: "
-                "Entry: <price>\nStop: <price>\nInvalidation: close <below or above> <price>. Under Hold, these are the levels of the "
+                "Entry: <price>\nStop: <price>\nInvalidation: close <below or above> <price>. Write every price with a decimal point, like 66.90, even in a report in Spanish. Under Hold, these are the levels of the "
                 "trade you would take if it triggers. Leave them out only if no such levels can be stated, and say why.")
     return ("\n\nMANDATE: this is an INVESTMENT analysis over months to years, at least three months. Weigh valuation, earnings "
             "quality, cash flow, competitive position, capital allocation and balance sheet. Use short-term technicals only for "

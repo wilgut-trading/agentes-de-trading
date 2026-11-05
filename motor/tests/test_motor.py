@@ -1116,8 +1116,12 @@ def test_h8_los_niveles_del_gerente_mandan_sobre_los_del_trader():
     estado = _hold(CONDICIONAL, accion="Buy", entrada="60", stop="55")
     controles, plan = _swing_hold(estado)
     assert (plan["entrada"], plan["stop"]) == (66.9, 64.02) and ("Niveles", ar.RESERVAS) in controles
-    _, plan = _swing_hold(_hold("Esperar.", accion="Buy", entrada="66.9", stop="64.02"))
-    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02)   # sin los suyos, valen los del trader
+    # En Hold, sin los suyos no hay plan: los del trader son hipoteticos.
+    controles, plan = _swing_hold(_hold("Esperar.", entrada="66.9", stop="64.02"))
+    assert (plan["entrada"], plan["stop"]) == (None, None) and not plan["condicional"] and not [c for c in controles if c[0].startswith("Plan")]
+    # En una decision con direccion sin los suyos, valen los del trader.
+    _, plan = _swing_hold(_caso("Sube.", entrada="66.9", stop="64.02"), REF_CIEN, "Buy")
+    assert (plan["entrada"], plan["stop"]) == (66.9, 64.02)
 
 
 def test_h9_niveles_en_una_sola_frase_y_formas_dudosas():
@@ -1632,3 +1636,13 @@ def test_i3_el_veredicto_usa_el_minimo_de_ajustes_sin_que_el_modelo_lo_conozca()
     estado = _caso("Sube.\nEntry: 100\nStop: 96\nInvalidation: close below 96", entrada="100", stop="96", objetivo="112")
     assert ("Riesgo/beneficio", ar.NO_OPERAR) not in _swing_hold(estado, REF_CIEN, "Buy", rr=2.5)[0]
     assert ("Riesgo/beneficio", ar.NO_OPERAR) in _swing_hold(estado, REF_CIEN, "Buy", rr=4)[0]
+
+
+@pytest.mark.parametrize("linea,esperado", [("Entrada: 100,50\nStop: 96,25", (100.5, 96.25)), ("Entry: 66.90\nStop: 64", (66.9, 64.0))])
+def test_i4_coma_decimal_del_informe_en_espanol(linea, esperado):
+    assert ar._bloque(f"**Investment Thesis**: Sube.\n{linea}\nInvalidación: cierre bajo 60\n\n**Price Target**: 110") == esperado
+
+
+@pytest.mark.parametrize("linea", ["Entry: 383,212\nStop: 380", "Entry: 1,266\nStop: 1200", "Entry: 1.2.3\nStop: 1"])
+def test_i5_numeros_ambiguos_no_son_un_plan(linea):
+    assert ar._bloque(f"**Investment Thesis**: Sube.\n{linea}\nInvalidation: close below 1\n\n**Price Target**: 110") is None
