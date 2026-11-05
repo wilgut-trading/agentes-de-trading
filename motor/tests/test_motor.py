@@ -1736,3 +1736,9 @@ def test_jev_sin_filtrar_no_es_fallo_de_datos():
     from motor.run import FALLO_DATOS
     assert not FALLO_DATOS.search("<Jev screening unavailable (HTTP 401); posts are unscreened>\nposts")
     assert FALLO_DATOS.search("<StockTwits unavailable: 503>")
+
+
+def test_objetivo_imposible_no_tiene_lado():
+    decision = "Entry: 100\nStop: 110\nInvalidation: close above 110\nPrice Target: {}"
+    assert ar.plan_de({"final_trade_decision": decision.format(-10)}, REF, rating="Sell", swing=False)["lado"] is None
+    assert ar.plan_de({"final_trade_decision": decision.format(80)}, REF, rating="Sell", swing=False)["lado"] == -1

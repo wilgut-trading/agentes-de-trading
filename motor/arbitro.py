@@ -241,7 +241,7 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     condicional = swing and rating == "Hold" and entrada is not None and direccion is not None
     # Solo lo que plantean los niveles: Sell y Underweight tambien pueden ser salir o reducir, no
     # abrir un corto, y Hold dice que hoy no se abre salvo que los niveles formen un plan condicional.
-    lado = None if rating == "Hold" and not condicional else direccion
+    lado = None if (rating == "Hold" and not condicional) or (rr is not None and min(base, stop, objetivo) <= 0) else direccion
     return {"lado": lado, "entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
             "rr_precio": _relacion(cierre, stop, objetivo), "horizonte": horizonte[-1].strip() if horizonte else None,
             "invalidez": invalidez_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,

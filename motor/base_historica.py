@@ -28,11 +28,11 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
     tabla = tabla.dropna(subset=["Open", "High", "Low", "Close"])
     if sin_cierre:
         tabla = tabla.iloc[:-1]
-    o, h, l, c = (tabla[k].to_numpy() for k in ("Open", "High", "Low", "Close"))
+    o, h, bajos, c = (tabla[k].to_numpy() for k in ("Open", "High", "Low", "Close"))
     if len(c) < MIN_VENTANAS + sesiones + VENTANA_VOLATILIDAD or (tabla[["Open", "High", "Low", "Close"]] <= 0).any(axis=None):
         return None
     # Un split sin ajustar o un dato roto, no un movimiento.
-    if (np.maximum(h[1:], c[1:]) / c[:-1] > 3).any() or (np.minimum(l[1:], c[1:]) / c[:-1] < 1 / 3).any():
+    if (np.maximum(h[1:], c[1:]) / c[:-1] > 3).any() or (np.minimum(bajos[1:], c[1:]) / c[:-1] < 1 / 3).any():
         return None
     rangos = (tabla["High"] - tabla["Low"]) / tabla["Close"]
     volatilidad = rangos.rolling(VENTANA_VOLATILIDAD).mean().to_numpy()
@@ -51,12 +51,12 @@ def calcular(tabla, entrada: float, stop: float, objetivo: float, sesiones: int,
         nivel_objetivo, nivel_stop = c[i] * (1 + lado * gana * k), c[i] * (1 - lado * riesgo)
         r = None
         for j in range(i + 1, i + sesiones + 1):
-            if (l[j] <= nivel_stop) if lado > 0 else (h[j] >= nivel_stop):
+            if (bajos[j] <= nivel_stop) if lado > 0 else (h[j] >= nivel_stop):
                 salida = min(o[j], nivel_stop) if lado > 0 else max(o[j], nivel_stop)
                 r = lado * (salida / c[i] - 1) / riesgo
                 stops += 1
                 break
-            if (h[j] >= nivel_objetivo) if lado > 0 else (l[j] <= nivel_objetivo):
+            if (h[j] >= nivel_objetivo) if lado > 0 else (bajos[j] <= nivel_objetivo):
                 r = relacion
                 objetivos += 1
                 break

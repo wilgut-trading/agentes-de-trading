@@ -264,7 +264,7 @@ def test_i_historial_y_backtests_aclaran_que_miden(dentro):
 def _con_jev(dentro, tienda, jev, plan=None):
     id_ = _analisis(dentro).headers["location"].rsplit("/", 1)[1]
     al.actualizar(tienda, id_, estado="terminado", rating="Underweight", veredicto="NO OPERAR", vivo=True, version="x", decision="d", objetivo="swing",
-                  arbitro={"veredicto": "NO OPERAR", "controles": [], "referencia": {}, "objetivo": "swing", "plan": plan or {**PLAN, "lado": -1}, "jev": jev, "debate": {"objeciones": []}})
+                  arbitro={"veredicto": "NO OPERAR", "controles": [], "referencia": {}, "objetivo": "swing", "plan": plan or {**PLAN, "direccion": -1}, "jev": jev, "debate": {"objeciones": []}})
     return dentro.get(f"/analisis/{id_}").text
 
 
@@ -277,13 +277,13 @@ def test_j_lado_y_probabilidades_de_jev_se_ven(dentro, tienda):
 
 def test_j_jev_caido_se_dice_y_analisis_viejo_no_rompe(dentro, tienda):
     assert "Jev no pudo responder (HTTP 401)" in _con_jev(dentro, tienda, {"error": "HTTP 401"})
-    viejo = {k: v for k, v in {**PLAN, "direccion": 1}.items() if k != "lado"}
+    viejo = {**PLAN, "direccion": 1}
     pagina = _con_jev(dentro, tienda, None, viejo)
     assert "<td>LONG</td>" in pagina and "Probabilidades de Jev" not in pagina
 
 
 def test_j_underweight_sin_short_no_afirma_short(dentro, tienda):
-    pagina = _con_jev(dentro, tienda, None, {**PLAN, "lado": 1})
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": 1})
     assert "<td>LONG</td>" in pagina and "reducir o salir de una posición larga" not in pagina
-    pagina = _con_jev(dentro, tienda, None, {**PLAN, "lado": None})
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": None, "condicional": False})
     assert "<td>—</td>" in pagina and "reducir o salir de una posición larga" not in pagina
