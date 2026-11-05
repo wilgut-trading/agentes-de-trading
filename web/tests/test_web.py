@@ -285,5 +285,5 @@ def test_j_jev_caido_se_dice_y_analisis_viejo_no_rompe(dentro, tienda):
 def test_j_underweight_sin_short_no_afirma_short(dentro, tienda):
     pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": 1})
     assert "<td>LONG</td>" in pagina and "reducir o salir de una posición larga" not in pagina
-    pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": None, "condicional": False})
+    pagina = _con_jev(dentro, tienda, None, {**PLAN, "direccion": None, "condicional": False, "entrada_limite": None})
     assert "<td>—</td>" in pagina and "reducir o salir de una posición larga" not in pagina
