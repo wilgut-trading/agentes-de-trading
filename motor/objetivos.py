@@ -51,28 +51,32 @@ def ruta_memoria(objetivo: str) -> str:
     return _MEMORIA[objetivo]
 
 
-def mandato(objetivo: str, rr_minimo: float) -> str:
+def mandato(objetivo: str) -> str:
+    # No menciona el minimo de riesgo/beneficio: al exigirselo, el modelo dio Hold en 32 de 32
+    # analisis, y cuando daba niveles los acomodaba para llegar justo. Lo comprueba el arbitro.
     if objetivo == "swing":
         return (f"\n\nMANDATE: this is a SWING TRADE analysis over 1 to {MAX_SWING} trading sessions. Judge only what can move the "
                 "price inside that window: trend, momentum, key levels, volatility (ATR), volume, relative strength, and catalysts "
                 "or earnings dates inside it. Use long-term valuation or balance sheet facts only if they can act as a catalyst "
-                "inside the window. Never suggest open-ended holding or periodic reviews. The Trader must give Entry Price and Stop "
-                "Loss as plain numbers. The Portfolio Manager must give Price Target as a plain number, Time Horizon written exactly like "
+                "inside the window. Never suggest open-ended holding or periodic reviews. Rate the direction you expect inside the "
+                "window; use Hold only when the evidence is balanced or too thin, not because a good trade is hard to find. The "
+                "application checks reward/risk itself, so set every level from market structure (support, resistance, ATR) and never "
+                "adjust a level to reach a particular ratio. The Trader must give Entry Price and Stop Loss as plain numbers, whatever the "
+                "action. The Portfolio Manager must give Price Target as a plain number, Time Horizon written exactly like "
                 f"`10 sessions` (never above {MAX_SWING}), and end the thesis with exactly these three lines, in this order, with nothing after them and no quote marks: "
-                "Entry: <price>\nStop: <price>\nInvalidation: close <below or above> <price>. Write them also when the rating is Hold and the trade is only "
-                f"conditional. The reward/risk from entry to target versus entry to stop must be at least {rr_minimo:g}. If no setup "
-                "reaches it or the levels cannot be stated, rate Hold, say so, and write no Entry or Stop line and no Price Target.")
+                "Entry: <price>\nStop: <price>\nInvalidation: close <below or above> <price>. Under Hold, these are the levels of the "
+                "trade you would take if it triggers. Leave them out only if no such levels can be stated, and say why.")
     return ("\n\nMANDATE: this is an INVESTMENT analysis over months to years, at least three months. Weigh valuation, earnings "
             "quality, cash flow, competitive position, capital allocation and balance sheet. Use short-term technicals only for "
             "timing. The Portfolio Manager must give Price Target as an absolute price and Time Horizon in months, and in the "
             "thesis a line `Invalidation: <condition>`.")
 
 
-def con_mandato(objetivo: str, rr_minimo: float):
+def con_mandato(objetivo: str):
     """Cubre tambien run_backtest, que construye su propio grafo: todo pasa por aqui."""
     from tradingagents.graph.trading_graph import TradingAgentsGraph
     original = TradingAgentsGraph.resolve_instrument_context
 
     def con_texto(grafo, *a, **k):
-        return original(grafo, *a, **k) + mandato(objetivo, rr_minimo)
+        return original(grafo, *a, **k) + mandato(objetivo)
     return mock.patch.object(TradingAgentsGraph, "resolve_instrument_context", con_texto)

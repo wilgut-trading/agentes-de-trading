@@ -1135,7 +1135,7 @@ def test_h10_buy_con_niveles_del_gerente_usa_esos_en_los_controles():
 
 
 def test_h11_el_mandato_pide_los_niveles_tambien_en_hold():
-    m = ob.mandato("swing", 2.5)
+    m = ob.mandato("swing")
     assert "Entry: <price>\nStop: <price>\nInvalidation" in m and "Hold" in m
 
 
@@ -1615,3 +1615,20 @@ def test_g20_citas_muy_lejanas_si_avisan(texto):
 
 def test_g21_divisas_cotizan_sin_pausa():
     assert ar._continuo("EURUSD=X") and ar._continuo("CL=F") and not ar._continuo("NFLX")
+
+
+def test_i1_el_mandato_no_le_pide_al_modelo_filtrar_por_riesgo_beneficio():
+    """Pedirselo dio Hold en 32 de 32 analisis de un backtest real. El filtro lo aplica el arbitro."""
+    m = ob.mandato("swing")
+    assert "2.5" not in m and "at least" not in m and "never adjust a level" in m and "whatever the action" in m and "Under Hold" in m
+
+
+def test_i2_buy_bajo_el_minimo_queda_en_no_operar_con_la_direccion_visible():
+    controles, plan = _swing_hold(_caso("Sube.\nEntry: 100\nStop: 96\nInvalidation: close below 96", entrada="100", stop="96", objetivo="105"), REF_CIEN, "Buy")
+    assert plan["rr"] == 1.25 and plan["direccion"] == 1 and ("Riesgo/beneficio", ar.NO_OPERAR) in controles
+
+
+def test_i3_el_veredicto_usa_el_minimo_de_ajustes_sin_que_el_modelo_lo_conozca():
+    estado = _caso("Sube.\nEntry: 100\nStop: 96\nInvalidation: close below 96", entrada="100", stop="96", objetivo="112")
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) not in _swing_hold(estado, REF_CIEN, "Buy", rr=2.5)[0]
+    assert ("Riesgo/beneficio", ar.NO_OPERAR) in _swing_hold(estado, REF_CIEN, "Buy", rr=4)[0]

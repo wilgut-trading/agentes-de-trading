@@ -212,7 +212,7 @@ def _analizar(tienda, t, carpeta, simulado):
 
     consumo = Consumo()
     grafo = TradingAgentsGraph(t["analistas"], config=config, callbacks=[consumo])
-    with ob.con_mandato(objetivo, valores["rr_minimo"]):
+    with ob.con_mandato(objetivo):
         inicio = grafo.create_run_state(ticker, fecha, "crypto" if crypto_base(ticker) else "stock", cartera)
     final, fallos, vistos, hechas, caidas = {}, 0, set(), [], []
     # El analista de sentimiento recibe sus fuentes dentro del prompt, no como herramientas.
@@ -302,7 +302,7 @@ def _backtest(tienda, t, carpeta):
     # sesion caida seguir con las demas solo gastaria intentos. Reanudar salta lo ya hecho.
     for i, (ticker, fecha) in enumerate(celdas):
         al.actualizar(tienda, t["id"], etapa=f"Análisis {i + 1} de {len(celdas)}: {ticker} {fecha}", avance=round(100 * i / len(celdas)))
-        with ob.con_mandato(objetivo, valores["rr_minimo"]), mock.patch.object(modulo, "TradingAgentsGraph", con_contador):
+        with ob.con_mandato(objetivo), mock.patch.object(modulo, "TradingAgentsGraph", con_contador):
             r = run_backtest([ticker], [fecha], _config(objetivo, valores), selected_analysts=t["analistas"], run_id=t["id"])
         al.actualizar(tienda, t["id"], consumo=consumo.resumen())
         for _, _, error in r.failures:
