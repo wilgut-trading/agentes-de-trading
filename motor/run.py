@@ -274,6 +274,7 @@ def _precio_visto(config, ticker, fecha) -> tuple | None:
     from zoneinfo import ZoneInfo
 
     import pandas as pd
+
     from tradingagents.dataflows.symbols import normalize_symbol, safe_ticker_component
     ruta = Path(config["data_cache_dir"]) / f"{safe_ticker_component(normalize_symbol(ticker))}-YFin-data.csv"
     try:

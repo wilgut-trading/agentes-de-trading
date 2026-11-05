@@ -34,8 +34,8 @@ def _pregunta(campo: str, sesiones: int, orden: tuple) -> dict:
 
 
 def _probabilidades(respuesta: dict) -> dict:
-    p = {v: float(respuesta["probabilities"][k]) for k, v in OPCIONES.items()}
-    if not all(math.isfinite(x) and 0 <= x <= 1 for x in p.values()) or abs(sum(p.values()) - 1) > 0.02:
+    p = {v: respuesta["probabilities"][k] for k, v in OPCIONES.items()}
+    if not all(type(x) in (int, float) and math.isfinite(x) and 0 <= x <= 1 for x in p.values()) or abs(sum(p.values()) - 1) > 0.02:
         raise ValueError("probabilidades no válidas")
     return p
 

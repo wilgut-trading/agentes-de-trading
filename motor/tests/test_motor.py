@@ -1432,6 +1432,7 @@ def _tabla(cierres, rango=0.01, apertura=None):
 
 def test_g1_consumo_cuenta_llamadas_y_suma_sobre_lo_previo():
     from langchain_core.messages import HumanMessage
+
     from motor.consumo import Consumo
     from motor.simulado import Falso
     c = Consumo({"llamadas": 5, "por_modelo": {"modelo": 5}})
@@ -1652,7 +1653,11 @@ def test_lado_del_plan():
     p = ar.plan_de({"final_trade_decision": "Price Target: 558.79\nTime Horizon: 10 sessions\nInvestment Thesis: x\nEntry: 595.80\nStop: 627.87\nInvalidation: close above 627.87\nPrice Target: 558.79"}, REF, rating="Underweight")
     assert p["lado"] == -1
     assert ar.plan_de(_estado(), REF)["lado"] == 1
-    assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Sell")["lado"] == -1
+    assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Sell")["lado"] is None
+    # Objetivo o stop del lado contrario: no hay operacion que rotular.
+    assert ar.plan_de({"final_trade_decision": "Price Target: 120"}, REF, rating="Underweight")["lado"] is None
+    assert ar.plan_de({"final_trade_decision": "Price Target: 80"}, REF, rating="Buy")["lado"] is None
+    assert ar.plan_de({"final_trade_decision": "Entry: 100\nStop: 95\nInvalidation: close below 95\nPrice Target: 90"}, REF, rating="Buy")["lado"] is None
     assert ar.plan_de({"final_trade_decision": "Nada"}, REF, rating="Hold")["lado"] is None
 
 

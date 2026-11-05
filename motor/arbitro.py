@@ -5,7 +5,6 @@ Criterios en motor/ARBITRO.md. No toca la calificacion del framework.
 import contextlib
 import math
 import re
-import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -239,16 +238,10 @@ def plan_de(estado, referencia, rr_minimo=2.5, rating=None, swing=True) -> dict:
     direccion = (1 if objetivo > base else -1) if rr is not None else None
     horizonte = _lineas(r"Time Horizon|Horizonte|Plazo", decision)
     a_favor = direccion is not None and SENTIDO.get(rating, 0) * direccion >= 0
-    sentido = SENTIDO.get(rating, 0)
     condicional = swing and rating == "Hold" and entrada is not None and direccion is not None
-    # Sin relacion calculable manda el rating, salvo que el stop sea de la operacion contraria.
-    # Hold dice que hoy no se abre: solo tiene lado si los niveles forman un plan condicional.
-    if rating == "Hold":
-        lado = direccion if condicional else None
-    elif direccion is not None:
-        lado = direccion
-    else:
-        lado = (sentido or None) if stop is None or (base is not None and (stop - base) * sentido < 0) else None
+    # Solo lo que plantean los niveles: Sell y Underweight tambien pueden ser salir o reducir, no
+    # abrir un corto, y Hold dice que hoy no se abre salvo que los niveles formen un plan condicional.
+    lado = None if rating == "Hold" and not condicional else direccion
     return {"lado": lado, "entrada": entrada, "stop": stop, "objetivo": objetivo, "base": base, "rr": rr,
             "rr_precio": _relacion(cierre, stop, objetivo), "horizonte": horizonte[-1].strip() if horizonte else None,
             "invalidez": invalidez_de(decision), "direccion": direccion, "rr_minimo": rr_minimo,
@@ -444,7 +437,7 @@ def controles_deterministas(estado, ticker, fecha, rating, analistas, referencia
             _reservas(c, "Niveles", RESERVAS, f"La decisión menciona un nivel de {nombre} fuera del plan: {usado}.")
     propios = _nivel(plan, "entrada"), _nivel(plan, "stop")
     if bloque:
-        for nombre, suyo, del_gerente in zip(("entrada", "stop"), propios, bloque):
+        for nombre, suyo, del_gerente in zip(("entrada", "stop"), propios, bloque, strict=True):
             if suyo is not None and suyo != del_gerente:
                 _reservas(c, "Niveles", RESERVAS, f"El gerente cambió {nombre} del trader, de {_p(suyo)} a {_p(del_gerente)}: se muestra la suya.")
     # Ajustar los niveles al final no puede mejorar lo que ya salia mal con los del trader. Si el

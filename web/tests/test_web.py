@@ -271,7 +271,7 @@ def _con_jev(dentro, tienda, jev, plan=None):
 def test_j_lado_y_probabilidades_de_jev_se_ven(dentro, tienda):
     fila = {"nombre": "Todos los informes", "sube": 0.2, "baja": 0.7, "sin_direccion": 0.1}
     pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "filas": [fila], "a_favor": 0.7, "en_contra": 0.2})
-    assert "<td>SHORT</td>" in pagina and "reducir una posición larga" in pagina
+    assert "<td>SHORT</td>" in pagina and "reducir o salir de una posición larga" in pagina
     assert "apunte a SHORT: <b>70 %</b>" in pagina and "No es la probabilidad de ganar" in pagina and "Todos los informes" in pagina
 
 
@@ -284,6 +284,6 @@ def test_j_jev_caido_se_dice_y_analisis_viejo_no_rompe(dentro, tienda):
 
 def test_j_underweight_sin_short_no_afirma_short(dentro, tienda):
     pagina = _con_jev(dentro, tienda, None, {**PLAN, "lado": 1})
-    assert "<td>LONG</td>" in pagina and "reducir una posición larga" not in pagina
+    assert "<td>LONG</td>" in pagina and "reducir o salir de una posición larga" not in pagina
     pagina = _con_jev(dentro, tienda, None, {**PLAN, "lado": None})
-    assert "<td>—</td>" in pagina and "reducir una posición larga" not in pagina
+    assert "<td>—</td>" in pagina and "reducir o salir de una posición larga" not in pagina
