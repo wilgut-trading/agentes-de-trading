@@ -332,7 +332,14 @@ def _backtest(tienda, t, carpeta):
         raise RuntimeError(f"Fallaron los {len(fallos)} análisis: {fallos[0][2][:200]}")
     al.actualizar(tienda, t["id"], estado="terminado", etapa="Terminado", avance=100, terminado=al.ahora(),
                   resumen=summarize(r).render() if r.log_path.is_file() else "Sin resultados.",
+                  resultado=_resultado(summarize(r), len(iter_grid(t["desde"], t["hasta"], t["cada"]))) if r.log_path.is_file() else None,
                   fallos=len(fallos), simulado=bool(os.getenv("AGENTES_SIMULADO")))
+
+
+def _resultado(s, fechas) -> dict:
+    """Lo mismo que el texto del framework, en datos, para mostrarlo en espanol."""
+    return {"resueltas": s.resolved, "pendientes": s.pending, "sin_calificar": s.unscored, "plazo": s.holding, "fechas": fechas,
+            "por_calificacion": [{"calificacion": k, "casos": v.count, "acierto": v.hit_rate, "alfa": v.mean_alpha} for k, v in s.by_rating.items()]}
 
 
 def _pausar_todo(tienda, primero):

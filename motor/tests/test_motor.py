@@ -852,6 +852,7 @@ def _circuito(motor, monkeypatch, objetivo):
         return original(self, messages, *a, **k)
     monkeypatch.setattr(Falso, "_generate", grabar)
     simulado.instalar()
+    monkeypatch.setattr(al, "hoy", lambda: "2026-11-06")   # un viernes: en fin de semana no hay memoria que guardar
     monkeypatch.setattr(ar, "precio_referencia", lambda *a: {"cierre": 100.0, "fecha": al.hoy(), "rango_medio": 2.0})
     monkeypatch.setattr(ar, "proximos_resultados", lambda *a: None)
     # TradingAgents fija su carpeta al importarse; en el motor real HOME cambia antes de eso.
@@ -1876,3 +1877,11 @@ def test_precio_citado_no_cruza_de_renglon():
     c = []
     ar.contrastar_precios(c, REF, None, "Last close: 104.0", False)
     assert [x for x in c if "cita" in x["detalle"]]
+
+
+def test_l_resultado_del_backtest_en_datos():
+    from tradingagents.backtest import BacktestSummary, RatingScore
+    s = BacktestSummary(resolved=3, pending=1, by_rating={"Buy": RatingScore(2, 0.5, 0.01), "Hold": RatingScore(1, None, 0.0)}, holding="10 trading days")
+    r = run._resultado(s, 2)
+    assert r["resueltas"] == 3 and r["pendientes"] == 1 and r["fechas"] == 2 and r["plazo"] == "10 trading days"
+    assert r["por_calificacion"][0] == {"calificacion": "Buy", "casos": 2, "acierto": 0.5, "alfa": 0.01} and r["por_calificacion"][1]["acierto"] is None

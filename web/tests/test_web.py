@@ -241,7 +241,7 @@ def test_h_hold_sin_operacion_lo_dice(dentro, tienda):
 
 def test_h_hold_con_invalidez_muestra_la_tabla(dentro, tienda):
     pagina = _plan_pagina(dentro, tienda, {"entrada": None, "stop": None, "objetivo": None, "rr": None, "rr_precio": None, "horizonte": "10 sessions", "invalidez": "close below 64.02"})
-    assert "Sin operación" not in pagina and "close below 64.02" in pagina
+    assert "Sin operación" not in pagina and "cierre por debajo de 64.02" in pagina
 
 
 def test_g_base_historica_y_consumo_se_ven(dentro, tienda):
@@ -306,3 +306,34 @@ def test_k_condicion_de_entrada_se_ve_y_se_escapa(dentro, tienda):
 def test_k_sin_entrada_no_muestra_condicion(dentro, tienda):
     pagina = _con_jev(dentro, tienda, None, {**PLAN, "entrada": None, "condicional": False, "condicion": "cierre bajo 90"})
     assert "Entra solo si:" not in pagina and "con condición" not in pagina
+
+
+def test_l_ingles_del_formato_y_certeza_redondeada():
+    assert modulo._es("close above 629.40") == "cierre por encima de 629.40" and modulo._es("Close below 5") == "cierre por debajo de 5"
+    assert modulo._es("10 sessions") == "10 sesiones" and modulo._es("1 session") == "1 sesión" and modulo._es("10 trading days") == "10 sesiones"
+    assert modulo._es("cierre sobre 5") == "cierre sobre 5" and modulo._es(None) == "" and modulo._es("within 30 days") == "within 30 days"
+    assert modulo._pct(0.997) == "más de 99 %" and modulo._pct(0.003) == "menos de 1 %" and modulo._pct(1.0) == "100 %"
+    assert modulo._pct(0.0) == "0 %" and modulo._pct(0.71) == "71 %" and modulo._pct(None) == "—"
+
+
+def test_l_plan_y_jev_se_leen_en_espanol(dentro, tienda):
+    fila = {"nombre": "Técnico", "sube": 0.001, "baja": 0.999, "evidencia": 0.94, "con_evidencia": True}
+    pagina = _con_jev(dentro, tienda, {"lado": -1, "sesiones": 10, "modelo": "jev-1.14.0", "lecturas": [fila], "con_evidencia": True, "a_favor": 0.999, "en_contra": 0.001},
+                      {**PLAN, "direccion": -1, "invalidez": "close above 629.40", "horizonte": "10 sessions"})
+    assert "cierre por encima de 629.40" in pagina and "<td>10 sesiones</td>" in pagina and "close above" not in pagina
+    assert "apunte a SHORT: <b>más de 99 %</b>" in pagina and "En contra: menos de 1 %" in pagina and "<td>94 %</td>" in pagina
+
+
+def test_l_backtest_en_espanol_y_viejo_en_texto(dentro, tienda):
+    datos = {"tipo": "backtest", "tickers": ["META"], "desde": "2026-08-31", "hasta": "2026-09-28", "cada": 28, "analistas": ["market"], "objetivo": "swing"}
+    t = al.encolar(tienda, datos)
+    al.actualizar(tienda, t["id"], estado="terminado", etapa="Terminado", resumen="Resolved cells: 15",
+                  resultado={"resueltas": 15, "pendientes": 0, "sin_calificar": 0, "plazo": "10 trading days", "fechas": 2,
+                             "por_calificacion": [{"calificacion": "Underweight", "casos": 11, "acierto": 0.3636, "alfa": 0.0421},
+                                                  {"calificacion": "Hold", "casos": 1, "acierto": None, "alfa": -0.001}]})
+    viejo = al.encolar(tienda, datos)
+    al.actualizar(tienda, viejo["id"], estado="terminado", etapa="Terminado", resumen="Resolved cells: 3 · pending: 0")
+    pagina = dentro.get("/backtests").text
+    assert "<td>Underweight</td><td>11</td><td>36 %</td><td>+4.21 %</td>" in pagina and "no marca dirección" in pagina
+    assert "a 10 sesiones" in pagina and "Son 2 fechas distintas" in pagina and "Resolved cells: 15" not in pagina
+    assert "Resolved cells: 3" in pagina and 'value="14"' in pagina

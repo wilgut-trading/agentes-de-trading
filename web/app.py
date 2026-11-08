@@ -85,6 +85,31 @@ def _etiqueta(t) -> str:
 
 plantillas.env.globals["etiqueta"] = _etiqueta
 plantillas.env.filters["precio"] = lambda n: "—" if n is None else arbitro._p(n)
+_INGLES = [(re.compile(r"\bclose above\b", re.I), "cierre por encima de"), (re.compile(r"\bclose below\b", re.I), "cierre por debajo de"),
+           (re.compile(r"\b1 (?:trading session|session|trading day)\b", re.I), "1 sesión"),   # "30 days" son de calendario
+           (re.compile(r"\b(\d+) (?:trading sessions|sessions|trading days)\b", re.I), r"\1 sesiones")]
+
+
+def _es(texto):
+    """Lo que el modelo escribe en ingles por obligacion del formato, leido en espanol."""
+    for patron, cambio in _INGLES:
+        texto = patron.sub(cambio, texto or "")
+    return texto
+
+
+def _pct(p):
+    """Una probabilidad redondeada no debe parecer certeza: 0,997 no es 100 %."""
+    if p is None:
+        return "—"
+    if 0.995 <= p < 1:
+        return "más de 99 %"
+    if 0 < p < 0.005:
+        return "menos de 1 %"
+    return f"{round(p * 100)} %"
+
+
+plantillas.env.filters["es"] = _es
+plantillas.env.filters["pct"] = _pct
 
 
 def _objetivo(valor: str) -> str:
